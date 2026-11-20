@@ -1,4 +1,4 @@
-import { chmodSync, linkSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { PathEscapeError } from "@betamultiagent/core";
 import { describe, expect, it } from "vitest";
@@ -86,14 +86,15 @@ describe("resolvePath", () => {
     expect(resolved.requested).not.toBe(resolved.real);
   });
 
-  it("refuses to write through a symlink target", async () => {
+  it("resolves a symlinked write target and checks the real path again", async () => {
     const { root, environment } = newEnvironment();
     try {
       symlinkSync(path.join(root, "src", "a.txt"), path.join(root, "alias.txt"), "file");
     } catch {
       return;
     }
-    await expect(environment.resolvePath("alias.txt", "write")).rejects.toBeInstanceOf(PathEscapeError);
+    const resolved = await environment.resolvePath("alias.txt", "write");
+    expect(resolved.real).toBe(realpathSync.native(path.join(root, "src", "a.txt")));
   });
 
   it("refuses to write to a file with several hard links", async () => {
