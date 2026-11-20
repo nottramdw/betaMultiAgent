@@ -4,6 +4,7 @@ import {
   approveCommands,
   classifyChanges,
   defaultTeamRoles,
+  ROLE_INSTRUCTIONS,
   roleSpec,
   scopePatternProblem,
   tailText,
@@ -135,5 +136,12 @@ describe("team roles", () => {
   it("builds a spec with the role's completion tool and turn budget", () => {
     const spec = roleSpec("reviewer", { model: { provider: "claude", id: "m" }, maxTurns: 5 }, ["read_file", "submit_review"]);
     expect(spec).toMatchObject({ name: "reviewer", role: "reviewer", budget: { maxTurns: 5 }, completion: { tool: "submit_review" } });
+  });
+
+  it("appends configured instructions to the role protocol instead of replacing it", () => {
+    const spec = roleSpec("lead", { model: { provider: "claude", id: "m" }, instructions: " Prefer small plans. " }, ["submit_plan"]);
+    expect(spec.instructions.startsWith(ROLE_INSTRUCTIONS.lead)).toBe(true);
+    expect(spec.instructions).toContain("submit_plan");
+    expect(spec.instructions.endsWith("\n\nPrefer small plans.")).toBe(true);
   });
 });

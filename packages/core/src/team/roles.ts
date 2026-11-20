@@ -102,7 +102,10 @@ export function roleSpec(role: AgentRole, config: RoleConfig, tools: readonly st
   return {
     name: role,
     role,
-    instructions: config.instructions ?? ROLE_INSTRUCTIONS[role],
+    instructions:
+      config.instructions === undefined
+        ? ROLE_INSTRUCTIONS[role]
+        : `${ROLE_INSTRUCTIONS[role]}\n\n${config.instructions.trim()}`,
     model: config.model,
     tools: [...tools],
     permissions: config.permissions ?? { rules: [], extraReadRoots: [] },
