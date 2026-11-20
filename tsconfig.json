@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/providers/claude" },
+    { "path": "packages/providers/grok" },
+    { "path": "packages/tools" },
+    { "path": "packages/skills" },
+    { "path": "packages/cli" }
+  ]
+}

@@ -1,0 +1,5 @@
+disallowed-methods = [
+  { path = "std::process::exit", reason = "return an ExitCode from main so destructors run" },
+  { path = "std::env::set_var", reason = "pass environment to child processes through Command::env" },
+  { path = "std::env::remove_var", reason = "pass environment to child processes through Command::env_remove" },
+]

@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../core" },
+    { "path": "../providers/claude" },
+    { "path": "../providers/grok" },
+    { "path": "../skills" },
+    { "path": "../tools" }
+  ]
+}

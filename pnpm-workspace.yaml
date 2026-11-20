@@ -1,0 +1,10 @@
+packages:
+  - packages/*
+  - packages/providers/*
+
+onlyBuiltDependencies:
+  - esbuild
+
+strictDepBuilds: true
+
+minimumReleaseAge: 10080
