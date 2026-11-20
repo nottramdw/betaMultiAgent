@@ -11,6 +11,7 @@
     }
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.8.0",
     "@betamultiagent/core": "workspace:*"
   }
 }
