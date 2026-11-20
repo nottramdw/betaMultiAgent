@@ -50,48 +50,48 @@ describe("resolvePath", () => {
     await expect(environment.resolvePath(path.join(extra, "lib.txt"), "write")).rejects.toBeInstanceOf(PathEscapeError);
   });
 
-  it("rejects a symlink pointing outside the root", async () => {
+  it("rejects a symlink pointing outside the root", async ({ skip }) => {
     const { root, environment } = newEnvironment();
     const outside = makeTempDir();
     writeTree(outside, { "secret.txt": "s" });
     try {
       symlinkSync(outside, path.join(root, "link"), isWindows ? "junction" : "dir");
     } catch {
-      return;
+      skip("symbolic links are not permitted here");
     }
     await expect(environment.resolvePath("link/secret.txt", "read")).rejects.toBeInstanceOf(PathEscapeError);
     await expect(environment.resolvePath("link/new.txt", "write")).rejects.toBeInstanceOf(PathEscapeError);
   });
 
-  it("rejects a dangling symlink whose target is outside the root", async () => {
+  it("rejects a dangling symlink whose target is outside the root", async ({ skip }) => {
     const { root, environment } = newEnvironment();
     const outside = makeTempDir();
     try {
       symlinkSync(path.join(outside, "missing.txt"), path.join(root, "dangling"), "file");
     } catch {
-      return;
+      skip("symbolic links are not permitted here");
     }
     await expect(environment.resolvePath("dangling", "write")).rejects.toBeInstanceOf(PathEscapeError);
   });
 
-  it("exposes the real path of a symlink that stays inside the root", async () => {
+  it("exposes the real path of a symlink that stays inside the root", async ({ skip }) => {
     const { root, environment } = newEnvironment();
     try {
       symlinkSync(path.join(root, "src", "a.txt"), path.join(root, "alias.txt"), "file");
     } catch {
-      return;
+      skip("symbolic links are not permitted here");
     }
     const resolved = await environment.resolvePath("alias.txt", "read");
     expect(resolved.real).toBe(path.join(root, "src", "a.txt"));
     expect(resolved.requested).not.toBe(resolved.real);
   });
 
-  it("resolves a symlinked write target and checks the real path again", async () => {
+  it("resolves a symlinked write target and checks the real path again", async ({ skip }) => {
     const { root, environment } = newEnvironment();
     try {
       symlinkSync(path.join(root, "src", "a.txt"), path.join(root, "alias.txt"), "file");
     } catch {
-      return;
+      skip("symbolic links are not permitted here");
     }
     const resolved = await environment.resolvePath("alias.txt", "write");
     expect(resolved.real).toBe(realpathSync.native(path.join(root, "src", "a.txt")));

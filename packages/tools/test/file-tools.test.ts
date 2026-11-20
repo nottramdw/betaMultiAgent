@@ -210,14 +210,14 @@ describe("glob", () => {
     expect(result.promptText).not.toContain(".env");
   });
 
-  it("does not follow a symlinked directory outside the root", async () => {
+  it("does not follow a symlinked directory outside the root", async ({ skip }) => {
     const outside = makeTempDir();
     writeTree(outside, { "leak.ts": "" });
     const { root, context } = setup({ "in.ts": "" });
     try {
       symlinkSync(outside, path.join(root, "out"), process.platform === "win32" ? "junction" : "dir");
     } catch {
-      return;
+      skip("symbolic links are not permitted here");
     }
     const result = await runTool(createGlobTool(), { pattern: "**/*.ts" }, context);
     expect(result.promptText).toBe("in.ts");

@@ -183,7 +183,7 @@ describe("link handling", () => {
     expect(registry.warnings.length).toBeGreaterThan(0);
   });
 
-  it("skips a SKILL.md that is a symlink", async () => {
+  it("skips a SKILL.md that is a symlink", async ({ skip }) => {
     const dir = path.join(workspace.root, ".bma/skills/sneaky");
     await mkdir(dir, { recursive: true });
     const target = path.join(workspace.base, "real-skill.md");
@@ -191,7 +191,7 @@ describe("link handling", () => {
     try {
       await symlink(target, path.join(dir, "SKILL.md"), "file");
     } catch {
-      return;
+      skip("symbolic links are not permitted here");
     }
 
     const registry = await discover(true);
