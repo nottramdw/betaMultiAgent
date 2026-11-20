@@ -88,6 +88,7 @@ export interface RepoPreflight {
 
 export interface CommitResult {
   readonly committed: boolean;
+  readonly commit?: string;
   readonly reason?: string;
 }
 

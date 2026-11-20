@@ -131,7 +131,7 @@ describe("commit", () => {
     writeTree(root, { "feature.txt": "f\n" });
     await repoOps.stageAll();
     const result = await repoOps.commit("add feature");
-    expect(result).toEqual({ committed: true });
+    expect(result).toEqual({ committed: true, commit: git(root, ["rev-parse", "HEAD"], env).trim() });
     expect(git(root, ["log", "-1", "--format=%s"], env).trim()).toBe("add feature");
   });
 

@@ -18,6 +18,13 @@ export { SECRET_PATTERNS, SENSITIVE_WRITE_PATTERNS } from "./permissions/path-pa
 export * from "./provider/provider.js";
 export * from "./redaction/redaction.js";
 export * from "./session/session-store.js";
+export * from "./team/completion-tools.js";
+export * from "./team/delegate-tool.js";
+export * from "./team/handoff.js";
+export * from "./team/roles.js";
+export * from "./team/run-team.js";
+export * from "./team/scope-check.js";
+export * from "./team/verification-gate.js";
 export * from "./tools/prompt-text.js";
 export * from "./tools/tool-definition.js";
 export * from "./tools/tool-spec.js";

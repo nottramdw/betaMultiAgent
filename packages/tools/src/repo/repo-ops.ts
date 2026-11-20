@@ -266,7 +266,8 @@ class GitRepoOps implements RepoOps {
     }
     const result = await git.run(["-c", "user.useConfigOnly=true", "commit", "--no-verify", "--no-gpg-sign", "-m", message]);
     if (result.exitCode === 0) {
-      return { committed: true };
+      const head = await git.checked(["rev-parse", "--verify", "HEAD"]);
+      return { committed: true, commit: head.stdout.toString("utf8").trim() };
     }
     if (IDENTITY_FAILURE.test(result.stderr)) {
       return { committed: false, reason: `git identity is not configured: ${result.stderr.trim()}` };
