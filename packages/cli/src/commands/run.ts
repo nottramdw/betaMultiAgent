@@ -49,6 +49,10 @@ const READ_ONLY_INSTRUCTIONS = [
   "Finish with a concise, accurate answer that cites the files you relied on.",
 ].join("\n");
 
+function withExtra(base: string, extra: string | undefined): string {
+  return extra === undefined ? base : `${base}\n\n${extra.trim()}`;
+}
+
 export function runExitCode(outcome: TurnOutcome): number {
   switch (outcome.type) {
     case "completed":
@@ -158,7 +162,7 @@ export async function runCommand(context: CommandContext, args: readonly string[
   const spec: AgentSpec = {
     name,
     role: role.data,
-    instructions: roleConfig?.instructions ?? (writable ? WRITE_INSTRUCTIONS : READ_ONLY_INSTRUCTIONS),
+    instructions: withExtra(writable ? WRITE_INSTRUCTIONS : READ_ONLY_INSTRUCTIONS, roleConfig?.instructions),
     model: modelRef,
     tools: tools.map((tool) => tool.name),
     permissions: { rules: [...workspace.config.rules], extraReadRoots: [...skills.readRoots()] },

@@ -87,7 +87,7 @@ function recordLine(record: EventRecord): string {
 }
 
 export async function sessionsCommand(context: CommandContext, args: readonly string[]): Promise<number> {
-  const [action, ...rest] = args;
+  const [action, ...rest] = args[0]?.startsWith("-") === true ? ["list", ...args] : args;
   const { values, positionals } = parseArgs({
     args: rest,
     allowPositionals: true,

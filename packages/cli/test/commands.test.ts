@@ -111,6 +111,17 @@ describe("bma run", () => {
     expect(result.stderr.text).toMatch(/API key/u);
   });
 
+  it("appends configured role instructions to the built-in ones", async () => {
+    const sandbox = makeSandbox();
+    writeTree(sandbox.bmaHome, { "config/config.json": JSON.stringify({ roles: { researcher: { model: "claude:claude-haiku-5-5", instructions: "Cite line numbers." } } }) });
+    const provider = claude("Answer.");
+    const result = await runBma(sandbox, ["run", "--role", "researcher", "where?"], { providers: { claude: provider } });
+    expect(result.code).toBe(EXIT_OK);
+    const system = provider.requests[0]?.system ?? "";
+    expect(system).toContain("You cannot change files or run commands.");
+    expect(system).toContain("Cite line numbers.");
+  });
+
   it("rejects an unknown model and a duplicated prompt", async () => {
     const sandbox = makeSandbox();
     const providers = { claude: claude() };
@@ -141,6 +152,9 @@ describe("bma sessions", () => {
     expect(list.stdout.text).toContain(oldId);
     expect(list.stdout.text).toContain("claude:claude-sonnet-5-5");
     expect(list.stdout.text).toContain("completed");
+    const listJson = await runBma(sandbox, ["sessions", "--json"]);
+    expect(listJson.code).toBe(EXIT_OK);
+    expect(listJson.stdout.jsonLines().length).toBeGreaterThan(0);
     const show = await runBma(sandbox, ["sessions", "show", newId, "--json"]);
     expect(show.stdout.jsonLines().some((line) => line["type"] === "message")).toBe(true);
     expect((await runBma(sandbox, ["sessions", "show", "../escape"])).code).toBe(EXIT_USAGE);
