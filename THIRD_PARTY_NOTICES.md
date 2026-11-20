@@ -36,8 +36,16 @@ Used to build and test the project; not distributed in release binaries.
 | @stablelib/base64 | 1.0.1 | MIT |
 | fast-sha256 | 1.3.0 | Unlicense |
 
-Release binaries ship a generated `THIRD_PARTY_LICENSES.txt` with the full license and notice texts of every bundled package and of Node.js.
+`json-schema-to-ts`, `ts-algebra` and `@babel/runtime` are type-level dependencies of `@anthropic-ai/sdk` and are not present in the bundled CLI.
+
+## Release binaries
+
+Release binaries embed Node.js and ship a generated `THIRD_PARTY_LICENSES.txt` with the full license and notice texts of Node.js and of every package that the bundler actually included, as recorded in the esbuild metafile ([scripts/collect-licenses.ts](scripts/collect-licenses.ts)). Packages outside the allowlist MIT, ISC, Apache-2.0, BSD-2-Clause, BSD-3-Clause, 0BSD and Unlicense, or without a license file, fail the build.
+
+`standardwebhooks` 1.1.1 is published without a license file. Its MIT license text is pinned from the upstream repository in [scripts/licenses/standardwebhooks@1.1.1/LICENSE](scripts/licenses/standardwebhooks@1.1.1/LICENSE) and labelled as such in the generated file.
+
+The Node.js release signing keys in [scripts/keys/node-release-keys.asc](scripts/keys/node-release-keys.asc) are the public keys listed in `keys.list` of [nodejs/release-keys](https://github.com/nodejs/release-keys) at commit `481637f813e912c4aa3622d7964ab426c97b8e8d`.
 
 ## Ported code
 
-None yet. Code adapted from other repositories will be listed here with its source, commit, license and the files it appears in.
+None. The repositories of the xAI GitHub organization were studied for design ideas only; no code from them is copied into this project. `@xai-official/sdk` is used unmodified as an npm dependency. Code adapted from other repositories in the future will be listed here with its source, commit, license and the files it appears in.

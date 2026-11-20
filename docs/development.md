@@ -39,8 +39,22 @@ Actions are pinned by commit SHA. YAML comments are rejected by `check:comments`
 | `actions/setup-node` | `949feb2413d6458794dcd2491c4babbbce0c15c1` | v7.1.0 |
 | `pnpm/action-setup` | `73e46992e05b19abd31f2f3c20e0e7370d762115` | v6.1.1 |
 | `actions/upload-artifact` | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` | v7.0.2 |
+| `actions/download-artifact` | `9000827ccba6bdab643e8b6fd33ac0654aef8333` | v8.0.2 |
+| `actions/attest-build-provenance` | `4d101475d8b20a2381f78447822ac1eab6504dd8` | v4.2.2 |
 | `Swatinem/rust-cache` | `d1527c8f67ef9af357290475d4af4b0fab8f12e0` | v2.9.3 |
 | `dtolnay/rust-toolchain` | `39008827e6b4319a349e9a42dfc90579dd25f1ca` | `stable` branch |
+
+## Packaging and release
+
+| Command | Purpose |
+|---|---|
+| `node scripts/bundle-cli.ts [--out-dir <dir>]` | Bundle the CLI into `bma.cjs` with its esbuild metafile; version from `BMA_VERSION` or `packages/cli/package.json`. |
+| `node scripts/collect-licenses.ts --meta <meta.json> --out <file> --node-license <path> [--node-version <v>]` | Write `THIRD_PARTY_LICENSES.txt` for the bundled packages and Node.js. |
+| `cargo run -p bma-packager --release -- build [--out <dir>] [--node <path> \| --official-node] [--skip-smoke]` | Build and smoke-test the standalone binary. `--help` lists all options. |
+
+- CI job `package` builds the binary on `macos-latest` and `windows-latest` and uploads it as `bma-<os>-<arch>`.
+- `.github/workflows/release.yml` runs on tags `v*`: it builds with `--official-node`, archives each binary with `LICENSE` and `THIRD_PARTY_LICENSES.txt`, then a separate `publish` job writes `SHA256SUMS`, creates build provenance attestations and the GitHub release. Only `publish` has write permissions.
+- `--official-node` needs `curl`, `tar` and `gpg`. On Windows, the gpg bundled with Git for Windows works through `--gpg`.
 
 ## Conventions
 
