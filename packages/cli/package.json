@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "bma": "./bin/bma.js"
+  },
   "exports": {
     ".": {
       "source": "./src/index.ts",
@@ -15,6 +18,7 @@
     "@betamultiagent/provider-claude": "workspace:*",
     "@betamultiagent/provider-grok": "workspace:*",
     "@betamultiagent/skills": "workspace:*",
-    "@betamultiagent/tools": "workspace:*"
+    "@betamultiagent/tools": "workspace:*",
+    "zod": "4.6.7"
   }
 }

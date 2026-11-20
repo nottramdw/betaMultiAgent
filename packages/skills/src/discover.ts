@@ -217,5 +217,13 @@ export async function discoverSkills(options: DiscoverOptions): Promise<SkillReg
     candidates.push(...found.skills);
   }
 
+  for (const extra of options.extraRoots ?? []) {
+    if (!path.isAbsolute(extra)) {
+      collector.warnings.push(`${extra}: extra skill root must be an absolute path, skipped`);
+      continue;
+    }
+    candidates.push(...(await scanSkillRoot(path.resolve(extra), "user", extra, collector)));
+  }
+
   return buildRegistry(candidates, plugins, collector.warnings);
 }

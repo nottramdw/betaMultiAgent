@@ -32,4 +32,5 @@ export interface DiscoverOptions {
   readonly root: string;
   readonly userConfigDir: string;
   readonly trusted: boolean;
+  readonly extraRoots?: readonly string[];
 }

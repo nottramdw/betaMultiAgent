@@ -66,6 +66,21 @@ describe("repo and user sources", () => {
     expect(registry.warnings).toEqual([]);
   });
 
+  it("scans absolute extra roots as user skills and skips relative ones", async () => {
+    const extra = path.join(workspace.base, "extra-skills");
+    await writeSkill(extra, "extra-skill", "extra-skill");
+
+    const registry = await discoverSkills({
+      root: workspace.root,
+      userConfigDir: workspace.config,
+      trusted: false,
+      extraRoots: [extra, "relative/skills"],
+    });
+
+    expect(registry.find("extra-skill")?.source).toBe("user");
+    expect(registry.warnings).toEqual(["relative/skills: extra skill root must be an absolute path, skipped"]);
+  });
+
   it("never scans plugins placed inside the repo even when trusted", async () => {
     await writeSkill(path.join(workspace.root, ".bma/plugins/p/skills"), "hidden", "hidden");
     await writePluginManifest(path.join(workspace.root, ".bma/plugins/p"), ".claude-plugin", { name: "p" });

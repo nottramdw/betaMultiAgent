@@ -7,6 +7,7 @@ export {
 } from "./environment/local-environment.js";
 export { buildChildEnv, type ChildEnvOptions, type EnvMap } from "./process/child-env.js";
 export { ExecError, type ExecErrorCode } from "./process/exec-error.js";
+export { killTrackedProcessTreesSync, trackedProcessIds } from "./process/process-registry.js";
 export { createRepoOps, DEFAULT_MAX_CHANGESET_ENTRIES, type RepoOpsOptions } from "./repo/repo-ops.js";
 export { createDefaultTools, type DefaultToolsOptions } from "./tools/default-tools.js";
 export { createEditFileTool } from "./tools/edit-file.js";

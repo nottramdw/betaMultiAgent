@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import { errorCode, isAborted } from "../platform/errors.js";
 import { ExecError } from "./exec-error.js";
+import { trackProcess, untrackProcess } from "./process-registry.js";
 
 const TERM_GRACE_MS = 5_000;
 const CLOSE_GRACE_MS = 1_000;
@@ -90,6 +91,9 @@ export function runSpawn(request: SpawnRequest): Promise<SpawnOutcome> {
       return;
     }
 
+    if (child.pid !== undefined) {
+      trackProcess(child.pid);
+    }
     let settled = false;
     let timedOut = false;
     let aborted = false;
@@ -107,6 +111,9 @@ export function runSpawn(request: SpawnRequest): Promise<SpawnOutcome> {
       clearTimeout(graceTimer);
       clearTimeout(forceTimer);
       request.signal?.removeEventListener("abort", onAbort);
+      if (child.pid !== undefined) {
+        untrackProcess(child.pid);
+      }
       child.stdout?.destroy();
       child.stderr?.destroy();
       const killed = timedOut || aborted;
