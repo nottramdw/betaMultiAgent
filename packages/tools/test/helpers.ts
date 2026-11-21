@@ -16,7 +16,7 @@ export function makeTempDir(prefix = "bma-tools-"): string {
 export function registerCleanup(): void {
   afterEach(() => {
     for (const dir of created.splice(0)) {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 }
