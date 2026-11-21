@@ -4,7 +4,7 @@
 
 A multi-agent development environment for Claude and Grok models. Agents, tools and skills are written in TypeScript on Node.js; the `bma` command-line tool runs a single agent or a small team (lead, executor, reviewer, researcher) against a local repository. Self-contained binaries are built with a Rust packager.
 
-> **Status:** early development (0.x). Interfaces, configuration keys and the on-disk session format may change without notice. No release has been published yet.
+> **Status:** early development (0.x). Interfaces, configuration keys and the on-disk session format may change without notice. Releases are published as pre-releases on [GitHub Releases](https://github.com/nottramdw/betaMultiAgent/releases).
 
 This project is not affiliated with or endorsed by xAI, Anthropic or Anysphere. The names Claude, Grok and Cursor are used only to describe compatibility.
 
@@ -94,7 +94,8 @@ The packager bundles the CLI with esbuild, embeds it into a Node.js single execu
 - [x] Tools, skills and plugin manifests
 - [x] Command-line interface and team orchestration
 - [x] Rust packager for single-binary distribution
-- [ ] First tagged release
+- [x] First tagged release (pre-release)
+- [ ] Live API smoke tests against Claude and Grok
 
 ## Contributing
 
