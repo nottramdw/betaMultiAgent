@@ -16,6 +16,8 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { createTtyApprover, createTtyCommandApprover } from "../approver/tty-approver.js";
 import { openAudit } from "../audit/open-audit.js";
+import type { DailySpend } from "../budget/daily-spend.js";
+import { openDailySpend, reserveRunBudget, trackSpend } from "../budget/run-budget.js";
 import { CommandApprovalTracker } from "../audit/audit-recorder.js";
 import { EXIT_BUDGET, EXIT_FAILED, EXIT_INTERRUPTED, EXIT_OK, EXIT_STOPPED, usageError } from "../cli-error.js";
 import { runsDir, samePath, sessionsDir, worktreesDir } from "../config/paths.js";
@@ -258,13 +260,23 @@ async function runPanel(
   count: number,
   judges: ReturnType<typeof resolveJudges>,
 ): Promise<PanelResult> {
+  const daily = openDailySpend(context, workspace);
+  const candidateInput = await panelCandidateInput(workspace, input, count, daily);
   const controller = new AbortController();
   const uninstall = installRunInterrupt(context, controller);
   try {
     const outcomes = await settleAll(
-      Array.from({ length: count }, () => executeTeam(context, workspace, { ...input, quiet: true, signal: controller.signal })),
+      Array.from({ length: count }, () => executeTeam(context, workspace, { ...candidateInput, quiet: true, signal: controller.signal })),
     );
-    const grading = { goal: input.task, acceptance: input.acceptance, judges, root: workspace.root, env: context.io.env, signal: controller.signal };
+    const grading = {
+      goal: input.task,
+      acceptance: input.acceptance,
+      judges,
+      root: workspace.root,
+      env: context.io.env,
+      signal: controller.signal,
+      ...(daily === undefined ? {} : { spend: { allowed: () => daily.hasRemaining(), charge: (costUsd: number) => daily.charge(costUsd) } }),
+    };
     const grades = await settleAll(outcomes.map((outcome) => gradeCandidate(outcome, grading)));
     const panel = buildPanel(outcomes, grades);
     if (input.json) {
@@ -276,6 +288,14 @@ async function runPanel(
   } finally {
     uninstall();
   }
+}
+
+async function panelCandidateInput(workspace: Workspace, input: TeamExecution, count: number, daily: DailySpend | undefined): Promise<TeamExecution> {
+  if (daily === undefined || lowest(workspace.config.budget.maxCostUsd, input.maxCost) !== undefined) {
+    return input;
+  }
+  const { remainingUsd } = await daily.summary();
+  return remainingUsd > 0 ? { ...input, maxCost: remainingUsd / count } : input;
 }
 
 export function installRunInterrupt(context: CommandContext, controller: AbortController): () => void {
@@ -364,7 +384,8 @@ export async function executeTeam(context: CommandContext, workspace: Workspace,
   const store = await SessionStore.open({ dir: runDir, redactor: context.redactor });
   const mainEnvironment = createEnvironment(workspace, skills, workspace.root, "local");
   const maxWallMs = wallMs(workspace.config.budget);
-  const maxCostUsd = lowest(workspace.config.budget.maxCostUsd, input.maxCost);
+  const runBudget = await reserveRunBudget(context, workspace, lowest(workspace.config.budget.maxCostUsd, input.maxCost));
+  const maxCostUsd = runBudget.maxCostUsd;
   const controller = new AbortController();
   const uninstall = input.signal === undefined ? installRunInterrupt(context, controller) : linkSignal(input.signal, controller);
   const catalog = skillCatalog(skills);
@@ -407,10 +428,13 @@ export async function executeTeam(context: CommandContext, workspace: Workspace,
       },
       events: new TeeSink(store, listeners),
       openSessionLog: async (id, role) =>
-        audit.recorder.tap(
-          await SessionStore.open({ dir: path.join(sessionsDir(workspace.dirs, workspace.root), id), redactor: context.redactor }),
-          id,
-          role,
+        trackSpend(
+          audit.recorder.tap(
+            await SessionStore.open({ dir: path.join(sessionsDir(workspace.dirs, workspace.root), id), redactor: context.redactor }),
+            id,
+            role,
+          ),
+          runBudget.reservation,
         ),
       redactor: context.redactor,
       ...(catalog === undefined ? {} : { skillCatalog: catalog }),
@@ -427,6 +451,7 @@ export async function executeTeam(context: CommandContext, workspace: Workspace,
       audit.recorder.teamOutcome(outcome, workspace.trusted, tracker);
     }
     await audit.ledger.close();
+    await runBudget.reservation?.release();
   }
   if (jsonl !== undefined) {
     jsonl.writeResult("team-outcome", { outcome });

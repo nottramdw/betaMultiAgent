@@ -1,7 +1,7 @@
 import { acceptanceProblems, ulid, type TeamStatus, type TurnOutcome } from "@betamultiagent/core";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { CliError, EXIT_FAILED, EXIT_OK, errorMessage, usageError } from "../cli-error.js";
+import { CliError, EXIT_BUDGET, EXIT_FAILED, EXIT_OK, errorMessage, usageError } from "../cli-error.js";
 import { tasksDir } from "../config/paths.js";
 import { readPromptFile } from "../input/prompt-file.js";
 import { JsonlWriter } from "../output/jsonl.js";
@@ -374,7 +374,8 @@ async function executeTask(context: CommandContext, workspace: Workspace, store:
       };
     }
   } catch (error) {
-    await store.setStatus({ id: task.id, status: "failed", code: "error", message: errorMessage(error) });
+    const refused = error instanceof CliError && error.exitCode === EXIT_BUDGET;
+    await store.setStatus({ id: task.id, status: refused ? "open" : "failed", code: refused ? "budget" : "error", message: errorMessage(error) });
     throw error;
   }
   await store.setStatus({

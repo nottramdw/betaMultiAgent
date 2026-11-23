@@ -16,6 +16,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { createTtyApprover } from "../approver/tty-approver.js";
 import { openAudit } from "../audit/open-audit.js";
+import { reserveRunBudget, trackSpend } from "../budget/run-budget.js";
 import { EXIT_BUDGET, EXIT_FAILED, EXIT_INTERRUPTED, EXIT_OK, EXIT_STOPPED, usageError } from "../cli-error.js";
 import { sessionsDir } from "../config/paths.js";
 import { parseModelSpec } from "../config/schema.js";
@@ -179,6 +180,7 @@ export async function executeRun(context: CommandContext, workspace: Workspace, 
   const permissions = createPermissionEngine(workspace, environment, skills, opened === undefined ? undefined : createTtyApprover(opened.channel, name));
   const roleConfig = workspace.config.roles[role];
   const maxWallMs = wallMs(workspace.config.budget);
+  const runBudget = await reserveRunBudget(context, workspace, workspace.config.budget.maxCostUsd);
   const spec: AgentSpec = {
     name,
     role: role,
@@ -188,7 +190,7 @@ export async function executeRun(context: CommandContext, workspace: Workspace, 
     permissions: { rules: [...workspace.config.rules], extraReadRoots: [...skills.readRoots()] },
     budget: {
       maxTurns: roleConfig?.maxTurns ?? DEFAULT_MAX_TURNS[role],
-      ...(workspace.config.budget.maxCostUsd === undefined ? {} : { maxCostUsd: workspace.config.budget.maxCostUsd }),
+      ...(runBudget.maxCostUsd === undefined ? {} : { maxCostUsd: runBudget.maxCostUsd }),
       ...(maxWallMs === undefined ? {} : { maxWallMs }),
     },
   };
@@ -236,7 +238,7 @@ export async function executeRun(context: CommandContext, workspace: Workspace, 
       environment,
       permissions,
       redactor: context.redactor,
-      events: audit.recorder.tap(store, id, role),
+      events: trackSpend(audit.recorder.tap(store, id, role), runBudget.reservation),
       systemPrompt: buildSystemPrompt({
         agentName: name,
         role: role,
@@ -257,6 +259,7 @@ export async function executeRun(context: CommandContext, workspace: Workspace, 
       audit.recorder.runOutcome(outcome, role, session.ledger.snapshot());
     }
     await audit.ledger.close();
+    await runBudget.reservation?.release();
   }
   if (human !== undefined) {
     human.flush();

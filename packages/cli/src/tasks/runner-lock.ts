@@ -62,9 +62,15 @@ async function create(file: string, owner: LockOwner): Promise<boolean> {
   }
 }
 
-export async function acquireRunnerLock(dir: string, env: LockEnvironment): Promise<RunnerLock> {
+export interface LockNaming {
+  readonly file?: string;
+  readonly holder?: string;
+}
+
+export async function acquireRunnerLock(dir: string, env: LockEnvironment, naming: LockNaming = {}): Promise<RunnerLock> {
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  const file = path.join(dir, LOCK_FILE);
+  const file = path.join(dir, naming.file ?? LOCK_FILE);
+  const holder = naming.holder ?? "task runner";
   const owner: LockOwner = { pid: env.pid, hostname: env.hostname, startedAt: env.now().toISOString() };
   const release = async () => {
     const current = await readOwner(file);
@@ -77,16 +83,16 @@ export async function acquireRunnerLock(dir: string, env: LockEnvironment): Prom
   }
   const existing = await readOwner(file);
   if (existing === undefined) {
-    throw new RunnerLockError(`another task runner holds ${file} and its owner cannot be read; remove the file if no runner is active`);
+    throw new RunnerLockError(`another ${holder} holds ${file} and its owner cannot be read; remove the file if no ${holder} is active`);
   }
   if (existing.hostname !== env.hostname || env.isAlive(existing.pid)) {
     throw new RunnerLockError(
-      `another task runner is active (pid ${String(existing.pid)} on ${existing.hostname}, since ${existing.startedAt}); lock file ${file}`,
+      `another ${holder} is active (pid ${String(existing.pid)} on ${existing.hostname}, since ${existing.startedAt}); lock file ${file}`,
     );
   }
   await rm(file, { force: true });
   if (!(await create(file, owner))) {
-    throw new RunnerLockError(`another task runner took ${file} while a stale lock was being replaced`);
+    throw new RunnerLockError(`another ${holder} took ${file} while a stale lock was being replaced`);
   }
   return { file, replaced: existing, release };
 }

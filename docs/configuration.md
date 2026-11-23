@@ -36,7 +36,7 @@ Sources are combined in [`mergeConfig`](../packages/cli/src/config/merge.ts). Th
 |-----|-----------|-----------------------|---------------------------|
 | `roles` | applied | merged per field: a project `model` replaces the user `model` and `effort` together; `instructions` and `maxTurns` from the project replace the user values; `maxCostUsd` is the lower of the two | ignored |
 | `permissions.rules` | applied | appended after user rules | only `deny` and `ask` rules are kept |
-| `budget` | applied | per field, the lower value wins | ignored |
+| `budget` | applied | per field, the lower value wins; `dailyMaxCostUsd` is ignored with a warning | ignored |
 | `env.passthrough` | applied | union with user list | ignored |
 | `skills.extraRoots` | applied | ignored, warning printed | ignored, warning printed |
 | `team.setup` | applied only when trusted and the project file has no `team.setup` | applied; replaces the user value | ignored; no setup commands run, including user-level ones |
@@ -88,6 +88,7 @@ Source: [`schema.ts`](../packages/cli/src/config/schema.ts). Every object is str
 | `budget` | object | none | Limits applied to every run. |
 | `budget.maxCostUsd` | positive number | not set (no cost limit) | Maximum cost in US dollars. |
 | `budget.maxWallMinutes` | positive integer | not set (no time limit) | Maximum wall-clock time in minutes. |
+| `budget.dailyMaxCostUsd` | positive number | not set (no daily limit) | Maximum total cost per UTC day across every project that shares the state directory. Honored only in the user file. See [Daily cost cap](#daily-cost-cap). |
 | `env` | object | none | Child-process environment settings. |
 | `env.passthrough` | array of strings | `[]` | Additional environment variable names passed to child processes. See [Child-process environment](#child-process-environment). |
 | `skills` | object | none | Skill settings. |
@@ -109,6 +110,19 @@ Source: [`permission-engine.ts`](../packages/core/src/permissions/permission-eng
 - Built-in hard denials apply regardless of rules: bma state files (including `trust.json`) are not accessible to agents, and bma configuration is not writable by agents.
 - Exec rule shape errors are detected when the permission engine is created at the start of `run` or `team`, and exit 1, not 2.
 
+### Daily cost cap
+
+Source: [`daily-spend.ts`](../packages/cli/src/budget/daily-spend.ts), [`run-budget.ts`](../packages/cli/src/budget/run-budget.ts).
+
+- The ledger is one JSON Lines file per UTC day in `<state dir>/spend/`, for example `2026-11-23.jsonl`. Every write holds the lock file `<state dir>/spend/spend.lock`.
+- `bma run`, `bma team`, each panel candidate and each task started by `bma task run` reserve budget before the first model request. The reservation is the lower of the run limit and the remaining daily amount, or the remaining amount when no run limit is set. It becomes the run's cost limit.
+- Remaining amount: the cap minus recorded spend minus the unspent part of open reservations. Reservations of processes on the same host that no longer run are not counted; their recorded spend still is.
+- Spend is recorded after each model response. The reservation is released when the run ends. Within a run, the limit is checked once per turn, so a run can exceed its reservation by one response.
+- When nothing remains, the command exits 3 before any model request. A task refused this way stays `open`, with code `budget` in its history.
+- `bma team --candidates <n>` without a run limit gives each candidate the remaining amount divided by `n`. Judge costs are recorded after each judge call; a judge is skipped, and the candidate cannot be selected, when nothing remains.
+- An unreadable ledger, or a lock held for more than 10 seconds, stops the run with exit 1 and names the file.
+- `bma eval` runs with its own temporary state directory and its required `--max-cost`; the daily cap does not apply to it.
+
 ## Validation
 
 Validation runs in [`parseConfigText`](../packages/cli/src/config/load.ts) when the file is loaded.
@@ -120,7 +134,7 @@ Validation runs in [`parseConfigText`](../packages/cli/src/config/load.ts) when 
 | Unknown keys | Exit 2 with the schema error. Applies to every strict object: top-level, `roles`, role objects, `permissions`, `budget`, `env`, `skills`, `team`, `audit`. |
 | Model reference | Must match `^(claude\|grok):[A-Za-z0-9][A-Za-z0-9._-]*$`. Whether the model exists in the catalog is checked when the model is used. |
 | Passthrough names | Must match `^[A-Z_][A-Z0-9_]*$` and must not be a denied name. Exit 2 otherwise. |
-| Budget and turns | `maxCostUsd` must be positive; `maxWallMinutes` and `maxTurns` must be positive integers. |
+| Budget and turns | `maxCostUsd` and `dailyMaxCostUsd` must be positive; `maxWallMinutes` and `maxTurns` must be positive integers. |
 | Audit retention | `audit.retentionDays` must be an integer of at least 30. |
 
 Credentials belong in environment variables. The configuration cannot hold them, and the CLI redacts the values of `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `XAI_API_KEY` from its output.

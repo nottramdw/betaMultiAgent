@@ -40,6 +40,12 @@ export interface PanelGrading {
   readonly root: string;
   readonly env: CliIo["env"];
   readonly signal: AbortSignal;
+  readonly spend?: JudgeSpend;
+}
+
+export interface JudgeSpend {
+  allowed(): Promise<boolean>;
+  charge(costUsd: number): Promise<void>;
 }
 
 export function ineligibility(outcome: TeamOutcome, judges: readonly JudgeRecord[] | undefined): string[] {
@@ -116,7 +122,13 @@ export async function gradeCandidate(outcome: TeamOutcome, grading: PanelGrading
   };
   const records: JudgeRecord[] = [];
   for (const judge of grading.judges) {
-    records.push(await runJudge(judge, input, AbortSignal.any([grading.signal, AbortSignal.timeout(JUDGE_TIMEOUT_MS)])));
+    if (grading.spend !== undefined && !(await grading.spend.allowed())) {
+      records.push({ model: judge.label, status: "skipped", message: "the daily cost cap is reached", costUsd: 0 });
+      continue;
+    }
+    const record = await runJudge(judge, input, AbortSignal.any([grading.signal, AbortSignal.timeout(JUDGE_TIMEOUT_MS)]));
+    await grading.spend?.charge(record.costUsd);
+    records.push(record);
   }
   return records;
 }

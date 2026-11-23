@@ -228,6 +228,8 @@ While a workspace is untrusted ([merge.ts](../packages/cli/src/config/merge.ts))
 | Verification and setup commands | Never approved (see [Team runs](#team-runs)) |
 | Exec allow rules | Ignored by the permission engine |
 
+`budget.dailyMaxCostUsd` is read only from the user configuration, even in a trusted workspace, so a repository cannot raise or remove the daily cap. The spend ledger in `<state dir>/spend/` is a bma state file and is not accessible to agents. When the ledger cannot be read, runs are refused instead of proceeding without the cap ([daily-spend.ts](../packages/cli/src/budget/daily-spend.ts)).
+
 `bma team --yes-verify` auto-approves verification commands with an `ask` decision, but only when the workspace is trusted.
 
 ## Project context, skills, and plugins

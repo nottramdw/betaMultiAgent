@@ -23,9 +23,11 @@ function lower(user: number | undefined, project: number | undefined): number | 
 function mergeBudget(user: BudgetConfig | undefined, project: BudgetConfig | undefined): BudgetConfig {
   const maxCostUsd = lower(user?.maxCostUsd, project?.maxCostUsd);
   const maxWallMinutes = lower(user?.maxWallMinutes, project?.maxWallMinutes);
+  const dailyMaxCostUsd = user?.dailyMaxCostUsd;
   return {
     ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
     ...(maxWallMinutes === undefined ? {} : { maxWallMinutes }),
+    ...(dailyMaxCostUsd === undefined ? {} : { dailyMaxCostUsd }),
   };
 }
 
@@ -61,6 +63,9 @@ export function mergeConfig(user: ConfigFile, project: ConfigFile, trusted: bool
   const warnings: string[] = [];
   if (project.skills?.extraRoots !== undefined) {
     warnings.push("skills.extraRoots is only read from the user configuration; the project value is ignored");
+  }
+  if (project.budget?.dailyMaxCostUsd !== undefined) {
+    warnings.push("budget.dailyMaxCostUsd is only read from the user configuration; the project value is ignored");
   }
   if (project.audit !== undefined) {
     warnings.push("audit is only read from the user configuration; the project value is ignored");

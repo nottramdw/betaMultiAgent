@@ -26,6 +26,7 @@ const RolesSchema = z.partialRecord(AgentRoleSchema, RoleConfigSchema);
 const BudgetConfigSchema = z.strictObject({
   maxCostUsd: z.number().positive().optional(),
   maxWallMinutes: z.number().int().positive().optional(),
+  dailyMaxCostUsd: z.number().positive().optional(),
 });
 export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
 
