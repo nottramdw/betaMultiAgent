@@ -1,0 +1,6 @@
+{
+  "name": "bma-method",
+  "version": "0.1.0",
+  "description": "Working-method skills for bma agents: explaining code, designing boundaries, encoding corrections, checking measurements and building verification skills.",
+  "skills": "skills"
+}

@@ -1,6 +1,7 @@
 import { ScriptedProvider } from "@betamultiagent/core/testing";
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from "../src/cli-error.js";
 import { makeSandbox, registerCleanup, runBma, writeTree, type Sandbox } from "./cli-harness.js";
@@ -129,6 +130,20 @@ describe("bma run", () => {
     const result = await runBma(sandbox, ["run", "--role", "researcher", "where?"], { providers: { claude: provider } });
     expect(result.code).toBe(EXIT_OK);
     expect(provider.requests[0]).toMatchObject({ model: "claude-haiku-5-5", effort: "low" });
+  });
+
+  it("lists the method skill plugin in the catalog through an extra skill root", async () => {
+    const sandbox = makeSandbox();
+    const skills = fileURLToPath(new URL("../../../plugins/bma-method/skills", import.meta.url));
+    writeTree(sandbox.bmaHome, { "config/config.json": JSON.stringify({ skills: { extraRoots: [skills] } }) });
+    const provider = claude("Answer.");
+    const result = await runBma(sandbox, ["run", "explain"], { providers: { claude: provider } });
+    expect(result.code).toBe(EXIT_OK);
+    const context = JSON.stringify(provider.requests[0]?.history[0] ?? {}).replace(/\\n/gu, "\n");
+    const listed = [...context.matchAll(/^- (bma-[a-z-]+) \(user\): /gmu)].map((match) => match[1]);
+    expect(listed).toHaveLength(8);
+    expect(listed).toContain("bma-working-principles");
+    expect(provider.requests[0]?.tools.map((tool) => tool.name)).toContain("load_skill");
   });
 
   it("rejects an unknown model and a duplicated prompt", async () => {

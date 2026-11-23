@@ -9,6 +9,7 @@ Verified against source: 2026-11-20.
 - [Configuration files](#configuration-files) - lookup locations, merge order, trust effects
 - [Schema](#schema) - every configuration key, validation rules
 - [Example](#example) - complete annotated file
+- [Method skill plugin](#method-skill-plugin) - bundled working-method skills and how to load them
 - [Platform directories](#platform-directories) - config, state and data locations
 - [Environment variables](#environment-variables) - provider keys, paths, child-process environment
 - [Commands](#commands) - flags, positionals and exit codes per command
@@ -171,6 +172,32 @@ Notes:
 - `effort` values must be supported by the chosen model. Grok models accept `low` to `xhigh`; `max` is Claude only.
 - On Windows, an absolute `extraRoots` entry uses a drive path such as `"C:\\team-skills"`. Relative entries are skipped with a warning.
 - A `team.setup` entry is an argv array. It is not passed through a shell.
+
+## Method skill plugin
+
+The repository ships eight working-method skills in [`plugins/bma-method`](../plugins/bma-method). They are not installed automatically. Load them in one of two ways:
+
+| Method | Steps | Effect |
+|---|---|---|
+| Plugin directory | Copy `plugins/bma-method` to `<config>/plugins/bma-method`. A symlink or junction is skipped. | The manifest is read; `bma doctor` reports one plugin; skills have origin `plugin:bma-method`. |
+| Extra root | Set `skills.extraRoots` in the user file to the absolute path of `<repo>/plugins/bma-method/skills`. | Skills are scanned directly; the manifest is not read. |
+
+| Skill | Purpose | Command and role |
+|---|---|---|
+| `bma-working-principles` | Route, baseline, change, verify, review, return; trace code, confirm reasons, label inference. | Any |
+| `bma-explain-mechanics` | Trace current behavior from an entry point to its effects. | `bma run`; lead or researcher in `bma team` |
+| `bma-explain-rationale` | Explain design reasons from git history and documents. | `bma run`; `git` asks for approval unless an exact `exec` rule matches; otherwise files only |
+| `bma-teach-codebase` | Combine the two explanation skills for onboarding. | `bma run` |
+| `bma-design-boundaries` | Fix types, signatures and module ownership in the plan. | `bma team`; lead |
+| `bma-encode-correction` | Turn a recurring mistake into a constraint: architecture, then types/lint/CI, then tests, then written rules. | `bma team`; lead and executor |
+| `bma-benchmark-checklist` | Check that a measurement supports its claim; Windows variant included. | `bma run` or `bma team` reviewer |
+| `bma-create-verification-skill` | Write a repository skill with launch, doctor, drive, capture and cleanup sections. | `bma team`; executor |
+
+Notes:
+
+- Read-only team roles have `read_file`, `glob`, `grep` and the skill tools only. The three explanation skills work best in `bma run`.
+- A skill with the same name in a repository skill directory (`.bma/skills`, `.claude/skills`, `.agents/skills`) wins over the plugin when the workspace is trusted; a duplicate warning is printed. User skills in `<config>/skills` win over plugin skills.
+- Plugins written for other agents load only their skills. `agents`, `hooks`, `commands`, `mcpServers` and `lspServers` are ignored with a warning. There is no parallel fan-out: subagent tasks map to `delegate` (read-only researcher) or run sequentially.
 
 ## Platform directories
 
