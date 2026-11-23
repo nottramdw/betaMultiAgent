@@ -250,6 +250,7 @@ Source: [../packages/core/src/agent/system-prompt.ts](../packages/core/src/agent
   3. The model must not exfiltrate secrets or attempt to bypass permissions.
 - The skill catalog is appended to the project-context message whenever a catalog exists. Its content is only the result of skill discovery, which applies the trust gate to repository skill roots. The catalog text states that skill text is reference data, not instructions ([catalog.ts](../packages/skills/src/catalog.ts)).
 - Approved memory entries are appended as a `memory` block of at most 8 KiB, with `<` escaped. An agent can only propose an entry with `memory_propose`; the entry reaches a model only after the user runs `bma memory approve`, which is refused when `BMA_AGENT_CHILD=1`. A proposal can still carry misleading text, so the user should read each entry before approving it ([memory-store.ts](../packages/cli/src/memory/memory-store.ts)).
+- `bma reflect` sends a digest of the audit ledger, task history and memory, fenced as data, in one request without tools. The ledger holds redacted request prefixes and argv, not file contents. Its memory proposals are recorded as `pending`, and its skill suggestions are only printed ([reflection.ts](../packages/cli/src/reflect/reflection.ts)).
 
 ### Skills
 

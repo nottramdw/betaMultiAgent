@@ -1,16 +1,7 @@
-import {
-  acceptanceProblems,
-  fenced,
-  MAX_ACCEPTANCE_CRITERIA,
-  MAX_CRITERION_LENGTH,
-  toolCalls,
-  toToolSpec,
-  type AssistantMessage,
-  type ModelInfo,
-  type Provider,
-} from "@betamultiagent/core";
+import { acceptanceProblems, fenced, MAX_ACCEPTANCE_CRITERIA, MAX_CRITERION_LENGTH } from "@betamultiagent/core";
 import { z } from "zod";
 import { CliError, EXIT_FAILED } from "../cli-error.js";
+import { requestToolCall, type ModelTarget } from "../model/single-tool-call.js";
 import type { TaskState } from "./task-store.js";
 
 export const PROPOSE_TASKS = "propose_tasks";
@@ -49,11 +40,6 @@ export const SplitProposalSchema = z
   });
 export type SplitProposal = z.infer<typeof SplitProposalSchema>;
 
-export interface SplitTarget {
-  readonly provider: Provider;
-  readonly model: ModelInfo;
-}
-
 export interface SplitResult {
   readonly proposal: SplitProposal;
   readonly costUsd: number;
@@ -83,36 +69,22 @@ function failure(message: string, costUsd: number): CliError {
   return new CliError(EXIT_FAILED, `the lead did not propose a split: ${message} (cost $${costUsd.toFixed(4)})`);
 }
 
-export async function proposeSplit(target: SplitTarget, task: TaskState, signal: AbortSignal): Promise<SplitResult> {
-  let message: AssistantMessage | undefined;
-  const stream = target.provider.stream(
+export async function proposeSplit(target: ModelTarget, task: TaskState, signal: AbortSignal): Promise<SplitResult> {
+  const result = await requestToolCall(
+    target,
     {
-      model: target.model.id,
       system: SPLIT_SYSTEM,
-      tools: [toToolSpec({ name: PROPOSE_TASKS, description: "Propose the tasks that replace the original task.", input: SplitProposalSchema })],
-      history: [{ role: "user", parts: [{ type: "text", text: splitPrompt(task) }] }],
-      maxOutputTokens: Math.min(SPLIT_MAX_OUTPUT_TOKENS, target.model.maxOutput),
-      toolChoice: "auto",
+      prompt: splitPrompt(task),
+      toolName: PROPOSE_TASKS,
+      toolDescription: "Propose the tasks that replace the original task.",
+      schema: SplitProposalSchema,
+      maxOutputTokens: SPLIT_MAX_OUTPUT_TOKENS,
       cacheKey: "bma-task-split",
     },
     signal,
   );
-  for await (const event of stream) {
-    if (event.type === "complete") {
-      message = event.message;
-    }
+  if (!result.ok) {
+    throw failure(result.problem, result.costUsd);
   }
-  if (message === undefined) {
-    throw failure("the stream ended without a message", 0);
-  }
-  const costUsd = message.usage.costUsd ?? 0;
-  const call = toolCalls(message).find((part) => part.name === PROPOSE_TASKS);
-  if (call === undefined) {
-    throw failure(`no ${PROPOSE_TASKS} call (stop reason ${message.stopReason})`, costUsd);
-  }
-  const parsed = SplitProposalSchema.safeParse(call.input);
-  if (!parsed.success) {
-    throw failure(parsed.error.issues.map((issue) => issue.message).join("; "), costUsd);
-  }
-  return { proposal: parsed.data, costUsd };
+  return { proposal: result.value, costUsd: result.costUsd };
 }

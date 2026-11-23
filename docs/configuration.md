@@ -590,6 +590,23 @@ With `--json`, `list` writes one record of type `memory-list` with `entries`; th
 
 Source: [`memory.ts`](../packages/cli/src/commands/memory.ts), [`memory-store.ts`](../packages/cli/src/memory/memory-store.ts), [`memory-tool.ts`](../packages/cli/src/memory/memory-tool.ts).
 
+### `bma reflect`
+
+```
+bma reflect [--days <n>] [--model provider:id] [--json]
+```
+
+Reviews recent runs of the current workspace and proposes improvements. Nothing it proposes takes effect without the user.
+
+1. Builds a digest of the last `--days` days (integer from 1 to 90, default 7): for each run in the audit ledger, the request prefix, outcome, verification, revisions, invalid tool inputs, cost, unapproved commands and denied permissions; tasks that are `failed` or `needs-human`; and the existing `pending` and `approved` memory entries. The digest is at most 24 KiB. Session transcripts are not read.
+2. Without runs or such tasks in the window, it exits 0 without a model call.
+3. Otherwise it sends the digest, fenced as data, to the `reviewer` model (or `--model`) in one request without tools. When `budget.dailyMaxCostUsd` is set and reached, it exits 3; otherwise its cost is added to the daily ledger. An invalid answer exits 1 and records nothing.
+4. The answer holds a summary, at most 5 memory proposals and at most 5 skill suggestions, each with evidence. Memory proposals are recorded as `pending` entries with agent `reflect` and the evidence as reason; review them with `bma memory`. Skill suggestions are only printed: to apply one, edit the skill and keep the change only if `bma eval --variant` with the edited skill root does not score worse than the current skills.
+
+With `--json`, one record of type `reflect` carries `runs`, `tasks`, `costUsd`, `summary`, `memory` (the recorded entries) and `skills`.
+
+Source: [`reflect.ts`](../packages/cli/src/commands/reflect.ts), [`reflection.ts`](../packages/cli/src/reflect/reflection.ts).
+
 ### `bma models`
 
 ```

@@ -6,6 +6,7 @@ import { doctorCommand } from "./commands/doctor.js";
 import { evalCommand } from "./commands/eval.js";
 import { memoryCommand } from "./commands/memory.js";
 import { modelsCommand } from "./commands/models.js";
+import { reflectCommand } from "./commands/reflect.js";
 import { runCommand } from "./commands/run.js";
 import { sessionsCommand } from "./commands/sessions.js";
 import { taskCommand } from "./commands/task.js";
@@ -31,6 +32,7 @@ Usage:
   bma task run [<id> | --all [--parallel <n>]] [--allow-dirty] [--max-cost <usd>] [--yes-verify | --unattended] [--json]
   bma sessions [list | show <id> | rm <id> | prune [--older-than <days>]] [--json]
   bma memory [list [--status <status>] | approve <id>... | reject <id>... | rm <id>...] [--json]
+  bma reflect [--days <n>] [--model provider:id] [--json]
   bma models [--provider claude|grok] [--json]
   bma doctor [--json]
   bma trust [--revoke]
@@ -57,6 +59,7 @@ const COMMANDS: Readonly<Record<string, Command>> = {
   task: taskCommand,
   sessions: sessionsCommand,
   memory: memoryCommand,
+  reflect: reflectCommand,
   models: modelsCommand,
   doctor: doctorCommand,
   trust: trustCommand,
