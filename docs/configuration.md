@@ -226,6 +226,8 @@ Override with `BMA_HOME`, which takes precedence on every platform:
 | `<state>/projects/<key>/sessions/<ulid>/` | Session event logs for `bma run` and team role sessions. |
 | `<state>/projects/<key>/runs/<ulid>/` | Team run records and `hooks/`. |
 | `<state>/projects/<key>/audit/<YYYY-MM>.jsonl` | Audit ledger, one file per UTC month. |
+| `<state>/projects/<key>/tasks/tasks.jsonl` | Task store, an append-only event log. |
+| `<state>/projects/<key>/tasks/runner.lock` | Lock held by `bma task run`. |
 | `<state>/worktrees/<runId>/` | Git worktree for a team run. |
 | `<state>/trust.json` | Trust grants. |
 
@@ -239,13 +241,13 @@ Source: [`audit-ledger.ts`](../packages/cli/src/audit/audit-ledger.ts), [`audit-
 
 | `kind` | Fields |
 |--------|--------|
-| `run-start` | `command`; `roles` with `model` and `effort` per role (`provider-default` when not set); `budget`; `taskSha256`; `taskPrefix` (first 80 characters). |
+| `run-start` | `command`; `taskId` when started by `bma task run`; `roles` with `model` and `effort` per role (`provider-default` when not set); `budget`; `taskSha256`; `taskPrefix` (first 80 characters). |
 | `permission` | `role`, `sessionId`, `action` (`read`, `write`, `exec`), `target` (paths relative to the workspace root; argv truncated to 16 tokens of 120 characters), `allowed`, `source`, `approval`. |
 | `run-outcome` | `status`, `code`, `revisions`, `planCorrections`, `invalidInputs`, `usage`, `usageByRole`, `verification`, `approvedCommands` and `unapprovedCommands` with `source` (`tty`, `yes-verify`, `rule`, `untrusted-skip`, `not-approved`), `commit`, `branch`. |
 
 - Files are created with mode `0600` in a directory with mode `0700`.
 - A write error prints one warning and disables the ledger for the run; the run continues.
-- `bma sessions prune` and `bma team clean` do not touch the ledger. Retention is set by `audit.retentionDays`.
+- `bma sessions prune`, `bma team clean` and `bma task` do not touch the ledger. Retention is set by `audit.retentionDays`.
 
 Directories are created with mode `0700` (on non-Windows platforms). `bma doctor` warns when the state directory is accessible to other users, and when `BMA_HOME` is outside the user profile.
 
@@ -408,6 +410,56 @@ bma team clean <runId> | --all [--delete-branch] [--yes]
 Removes the run's worktree (forced) and run directory. Uncommitted changes in the worktree are listed before removal and are lost. Exit 0 on success, 1 if any removal failed, 2 for usage errors.
 
 Source: [`team-clean.ts`](../packages/cli/src/commands/team-clean.ts).
+
+### `bma task`
+
+```
+bma task add <goal> [--goal-file <file>] [--title <text>] [--accept <criterion>]... [--after <id>]... [--parent <id>] [--ask] [--json]
+bma task [list [--status <status>] | show <id> | cancel <id>] [--json]
+bma task run [<id> | --all] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--json]
+```
+
+A task records a goal for a later run. Tasks are stored per workspace in `<state>/projects/<key>/tasks/tasks.jsonl`; each line is a redacted event (`added` or `status`), and the current state is derived from the events in order. Malformed lines are skipped with a warning. Task ids are ULIDs; commands accept the full id or a unique prefix of at least 4 characters.
+
+| Action | Behavior |
+|--------|----------|
+| `add` | Adds an `open` task. The goal comes from positional text or `--goal-file` (at most 20,000 characters). |
+| `list` (default) | Lists tasks with id, status, mode, title and dependencies. `--status` filters by status. |
+| `show <id>` | Prints the task, its dependencies with their status, and the status history with run ids. |
+| `cancel <id>` | Sets an `open`, `failed` or `needs-human` task to `cancelled`. |
+| `run` | Runs tasks; see below. |
+
+Options of `add`:
+
+| Option | Short | Meaning |
+|--------|-------|---------|
+| `--goal-file` | `-f` | Read the goal from a file. Cannot be combined with positional text. |
+| `--title` | | Title of 1 to 200 characters. Default: the first non-empty line of the goal, cut to 80 characters. |
+| `--accept` | | Acceptance criterion, same limits as `bma team --accept`. Stored with the task and immutable. Not allowed with `--ask`. |
+| `--after` | | Dependency, repeatable. The task must exist and must not be cancelled. |
+| `--parent` | | Parent task, recorded for grouping. It does not affect readiness. |
+| `--ask` | | Mode `ask`: answered by a read-only `researcher` session instead of a team run. |
+
+Statuses: `open`, `running`, `done`, `failed`, `needs-human`, `cancelled`. A task is ready when it is `open` and every dependency is `done`.
+
+`bma task run`:
+
+- Without an id, runs the oldest ready task. With `--all`, keeps running ready tasks in order until none is left, a run is interrupted, or the process stops. With an id, runs that task if it is `open`, `failed` or `needs-human` and its dependencies are `done`.
+- Mode `team` runs `bma team` with the task goal and acceptance criteria; `--allow-dirty`, `--max-cost` and `--yes-verify` have the same meaning. Mode `ask` runs `bma run --role researcher` with the goal.
+- Each run's `run-start` audit record carries `taskId`. The task history records the run id (team run id or session id).
+- Only one runner per workspace: `tasks/runner.lock` is created exclusively and holds `pid`, `hostname` and `startedAt`. A lock from a process that no longer exists on the same host is replaced with a warning; any other existing lock is an error (exit 1) that names the lock file. After taking the lock, tasks left `running` by a stopped runner are set to `failed` with code `interrupted`.
+- With `--json`, each finished task writes a record of type `task-run` with `taskId`, `status` and `runId`; when no task is ready, one record with `status` `idle`.
+
+| Run result | Task status |
+|------------|-------------|
+| Team `approved`; ask `completed` | `done` |
+| Team `needs-human` or `blocked`; ask `refused` | `needs-human` |
+| Team `failed` or `budget-exceeded`; ask failed, loop detected, budget exceeded or output token limit | `failed` |
+| `aborted` | `open` |
+
+Exit codes: 0 when every run is `done` or no task is ready; otherwise the exit code of the first run that did not end `done` (as for `bma team` or `bma run`). Usage errors exit 2.
+
+Source: [`task.ts`](../packages/cli/src/commands/task.ts), [`task-store.ts`](../packages/cli/src/tasks/task-store.ts), [`runner-lock.ts`](../packages/cli/src/tasks/runner-lock.ts).
 
 ### `bma sessions`
 

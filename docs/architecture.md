@@ -280,8 +280,9 @@ Entry: [`packages/cli/bin/bma.js`](../packages/cli/bin/bma.js) imports `runCli` 
 | [wiring.ts](../packages/cli/src/wiring.ts) | Builds redactor, model resolver, workspace, environment, permission engine, tools, team roles |
 | [config/paths.ts](../packages/cli/src/config/paths.ts) | State and config directories, workspace root checks, project keys |
 | [cli-error.ts](../packages/cli/src/cli-error.ts) | Exit codes |
-| `commands/*.ts` | `run`, `team` (with `team clean`), `sessions`, `models`, `doctor`, `trust` |
+| `commands/*.ts` | `run`, `team` (with `team clean`), `task`, `sessions`, `models`, `doctor`, `trust` |
 | [approver/tty-approver.ts](../packages/cli/src/approver/tty-approver.ts) | Interactive permission and command prompts |
+| `tasks/*.ts` | Task store (event log folded into task state) and the exclusive runner lock |
 | `audit/*.ts` | Audit ledger: monthly JSONL files, retention, reader, and the session-log tap that records permissions and per-role cost |
 
 ### Exit codes
@@ -302,6 +303,7 @@ Entry: [`packages/cli/bin/bma.js`](../packages/cli/bin/bma.js) imports `runCli` 
 | `bma run` | One agent session. Flags: `--prompt`/`-p`, `--prompt-file`/`-f`, `--model`/`-m`, `--role` (default `executor`), `--json`. Session log is stored under the project's sessions directory. |
 | `bma team <task>` | Full team pipeline. Flags: `--task-file`/`-f`, `--allow-dirty`, `--max-cost`, `--yes-verify`, `--accept` (repeatable), `--json`. Run directory is `<runsDir>/<runId>` with a `hooks/` subdirectory. |
 | `bma team clean` | Removes a run's worktree, and optionally branch `bma/<runId>` with `--delete-branch`. Lists uncommitted changes first. Outside a terminal, `--yes` is required. |
+| `bma task` | `add`, `list` (default), `show`, `cancel`, `run [<id> | --all]`. A task stores a goal, a mode (`team` or `ask`), immutable acceptance criteria and dependencies. `run` takes the per-workspace runner lock and calls `executeTeam` or `executeRun`, the same functions behind `bma team` and `bma run`, with the task id. |
 | `bma sessions` | `list` (default), `show <id>`, `rm <id>`, `prune [--older-than <days>]` (default 30). Locked sessions are not removed by `rm` or `prune`. |
 | `bma models` | Prints the catalog of both providers. `--provider claude\|grok`, `--json`. |
 | `bma doctor` | Checks Node, platform, git, keys, hosts, state directory mode, workspace, trust, config, instructions, skills, long paths on Windows, and sandbox status. Exits 1 when an error-level check fails. |
@@ -324,7 +326,7 @@ Resolved by [`resolveDirs`](../packages/cli/src/config/paths.ts):
 
 ### Audit ledger
 
-`bma run` and `bma team` open an `AuditLedger` in `<state>/projects/<key>/audit`. An `AuditRecorder` wraps each session's event sink: it forwards every record unchanged, writes `permission` records, and counts tool results rejected as `INVALID_INPUT`. The run writes `run-start` before the first session and `run-outcome` after it ends. Per-role cost comes from `TeamOutcome.usageByRole`, which `runTeam` sums from one usage ledger per role. The core event protocol is unchanged. Record fields: [configuration.md](./configuration.md#audit-ledger).
+`bma run`, `bma team` and `bma task run` open an `AuditLedger` in `<state>/projects/<key>/audit`. An `AuditRecorder` wraps each session's event sink: it forwards every record unchanged, writes `permission` records, and counts tool results rejected as `INVALID_INPUT`. The run writes `run-start` (with `taskId` when started from a task) before the first session and `run-outcome` after it ends. Per-role cost comes from `TeamOutcome.usageByRole`, which `runTeam` sums from one usage ledger per role. The core event protocol is unchanged. Record fields: [configuration.md](./configuration.md#audit-ledger).
 
 ### Wiring
 

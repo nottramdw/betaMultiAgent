@@ -34,6 +34,7 @@ const RunStartSchema = z.object({
   budget: z.object({ maxCostUsd: z.number().positive().optional(), maxWallMs: z.number().int().positive().optional() }),
   taskSha256: z.string().regex(/^[0-9a-f]{64}$/u),
   taskPrefix: z.string(),
+  taskId: z.string().min(1).optional(),
 });
 
 const PermissionSchema = z.object({

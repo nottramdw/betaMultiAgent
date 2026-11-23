@@ -7,6 +7,7 @@ import { evalCommand } from "./commands/eval.js";
 import { modelsCommand } from "./commands/models.js";
 import { runCommand } from "./commands/run.js";
 import { sessionsCommand } from "./commands/sessions.js";
+import { taskCommand } from "./commands/task.js";
 import { teamCommand } from "./commands/team.js";
 import { trustCommand } from "./commands/trust.js";
 import { displayValue } from "./output/sanitize.js";
@@ -22,6 +23,10 @@ Usage:
   bma run [--prompt <text> | --prompt-file <file> | <text>] [--model provider:id] [--role <role>] [--json]
   bma team <task> [--task-file <file>] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--json]
   bma team clean <runId> | --all [--delete-branch] [--yes]
+  bma task add <goal> [--goal-file <file>] [--title <text>] [--accept <criterion>]... [--after <id>]...
+           [--parent <id>] [--ask] [--json]
+  bma task [list [--status <status>] | show <id> | cancel <id>] [--json]
+  bma task run [<id> | --all] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--json]
   bma sessions [list | show <id> | rm <id> | prune [--older-than <days>]] [--json]
   bma models [--provider claude|grok] [--json]
   bma doctor [--json]
@@ -44,6 +49,7 @@ type Command = (context: CommandContext, args: readonly string[]) => Promise<num
 const COMMANDS: Readonly<Record<string, Command>> = {
   run: runCommand,
   team: teamCommand,
+  task: taskCommand,
   sessions: sessionsCommand,
   models: modelsCommand,
   doctor: doctorCommand,

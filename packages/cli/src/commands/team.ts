@@ -36,6 +36,7 @@ import {
   teamRoles,
   untrustedWarning,
   wallMs,
+  type Workspace,
 } from "../wiring.js";
 import { isInteractive, openPromptChannel, type CommandContext, type OpenedChannel } from "./command-context.js";
 import { teamCleanCommand } from "./team-clean.js";
@@ -53,7 +54,7 @@ export function teamExitCode(status: TeamStatus): number {
   return STATUS_EXIT[status];
 }
 
-function parseCost(text: string | undefined): number | undefined {
+export function parseCost(text: string | undefined): number | undefined {
   if (text === undefined) {
     return undefined;
   }
@@ -188,12 +189,39 @@ export async function teamCommand(context: CommandContext, args: readonly string
   const maxCost = parseCost(values["max-cost"]);
   const task = await readTask(context, values["task-file"], positionals);
   const workspace = await openWorkspace(context.io, context.redactor);
+  reportWorkspace(context, workspace);
+  const outcome = await executeTeam(context, workspace, {
+    task,
+    acceptance,
+    allowDirty: values["allow-dirty"],
+    ...(maxCost === undefined ? {} : { maxCost }),
+    yesVerify: values["yes-verify"],
+    json: values.json,
+  });
+  return teamExitCode(outcome.status);
+}
+
+export function reportWorkspace(context: CommandContext, workspace: Workspace): void {
   for (const warning of workspace.config.warnings) {
     context.err.line(`bma: ${warning}`);
   }
   if (!workspace.trusted) {
     context.err.line(untrustedWarning());
   }
+}
+
+export interface TeamExecution {
+  readonly task: string;
+  readonly acceptance: readonly string[];
+  readonly allowDirty: boolean;
+  readonly maxCost?: number;
+  readonly yesVerify: boolean;
+  readonly json: boolean;
+  readonly taskId?: string;
+}
+
+export async function executeTeam(context: CommandContext, workspace: Workspace, input: TeamExecution): Promise<TeamOutcome> {
+  const { task, acceptance } = input;
   const roles = teamRoles(workspace, context.overrides);
   const resolveModel = createModelResolver(context.io.env, context.overrides);
   for (const role of Object.values(roles)) {
@@ -214,23 +242,23 @@ export async function teamCommand(context: CommandContext, args: readonly string
     baseEnv: context.io.env,
     envPassthrough: workspace.config.passthrough,
   };
-  const opened: OpenedChannel | undefined = isInteractive(context, values.json) ? openPromptChannel(context) : undefined;
+  const opened: OpenedChannel | undefined = isInteractive(context, input.json) ? openPromptChannel(context) : undefined;
   let approveCommands: CommandApprover | undefined;
   let tracker: CommandApprovalTracker | undefined;
-  if (workspace.trusted && values["yes-verify"]) {
+  if (workspace.trusted && input.yesVerify) {
     tracker = new CommandApprovalTracker("yes-verify");
     approveCommands = tracker.wrap(() => Promise.resolve(true));
   } else if (workspace.trusted && opened !== undefined) {
     tracker = new CommandApprovalTracker("tty");
     approveCommands = tracker.wrap(createTtyCommandApprover(opened.channel));
   }
-  const human = values.json ? undefined : new HumanRenderer({ stdout: context.out, stderr: context.err, streamText: false });
-  const jsonl = values.json ? new JsonlWriter(context.io.stdout, context.redactor) : undefined;
+  const human = input.json ? undefined : new HumanRenderer({ stdout: context.out, stderr: context.err, streamText: false });
+  const jsonl = input.json ? new JsonlWriter(context.io.stdout, context.redactor) : undefined;
   const listeners: EventListener[] = [human ?? jsonl].filter((entry) => entry !== undefined);
   const store = await SessionStore.open({ dir: runDir, redactor: context.redactor });
   const mainEnvironment = createEnvironment(workspace, skills, workspace.root, "local");
   const maxWallMs = wallMs(workspace.config.budget);
-  const maxCostUsd = lowest(workspace.config.budget.maxCostUsd, maxCost);
+  const maxCostUsd = lowest(workspace.config.budget.maxCostUsd, input.maxCost);
   const controller = new AbortController();
   const uninstall = installInterruptHandler({
     signals: context.io.signals,
@@ -251,6 +279,7 @@ export async function teamCommand(context: CommandContext, args: readonly string
       ...(maxWallMs === undefined ? {} : { maxWallMs }),
     },
     task,
+    ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
   });
   let outcome: TeamOutcome | undefined;
   try {
@@ -258,8 +287,8 @@ export async function teamCommand(context: CommandContext, args: readonly string
       runId,
       root: workspace.root,
       trusted: workspace.trusted,
-      allowDirty: values["allow-dirty"],
-      ...(acceptance.length === 0 ? {} : { acceptance }),
+      allowDirty: input.allowDirty,
+      ...(acceptance.length === 0 ? {} : { acceptance: [...acceptance] }),
       roles,
       repo: createRepoOps({ repoRoot: workspace.root, ...repoOptions }),
       openRepo: (root) => createRepoOps({ repoRoot: root, ...repoOptions }),
@@ -306,5 +335,5 @@ export async function teamCommand(context: CommandContext, args: readonly string
   } else {
     printTeamSummary(context.out, outcome);
   }
-  return teamExitCode(outcome.status);
+  return outcome;
 }

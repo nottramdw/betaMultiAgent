@@ -26,6 +26,7 @@ export interface RunStartInput {
   readonly roles: Partial<Record<AgentRole, ModelRef>>;
   readonly budget: { readonly maxCostUsd?: number; readonly maxWallMs?: number };
   readonly task: string;
+  readonly taskId?: string;
 }
 
 function truncateToken(token: string): string {
@@ -118,6 +119,7 @@ export class AuditRecorder {
       budget: input.budget,
       taskSha256: createHash("sha256").update(input.task).digest("hex"),
       taskPrefix: input.task.slice(0, TASK_PREFIX_CHARS),
+      ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
     });
   }
 

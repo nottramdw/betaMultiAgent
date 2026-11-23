@@ -33,11 +33,11 @@ import {
   openWorkspace,
   skillCatalog,
   teamRoles,
-  untrustedWarning,
   wallMs,
   type Workspace,
 } from "../wiring.js";
 import { isInteractive, openPromptChannel, type CommandContext, type OpenedChannel } from "./command-context.js";
+import { reportWorkspace } from "./team.js";
 
 const WRITE_INSTRUCTIONS = [
   "Complete the user's task in the workspace.",
@@ -139,13 +139,32 @@ export async function runCommand(context: CommandContext, args: readonly string[
   }
   const input = await readInput(context, values, positionals);
   const workspace = await openWorkspace(context.io, context.redactor);
-  for (const warning of workspace.config.warnings) {
-    context.err.line(`bma: ${warning}`);
-  }
-  if (!workspace.trusted) {
-    context.err.line(untrustedWarning());
-  }
-  const modelRef = chooseModel(workspace, context, role.data, values.model);
+  reportWorkspace(context, workspace);
+  const result = await executeRun(context, workspace, {
+    input,
+    role: role.data,
+    ...(values.model === undefined ? {} : { model: values.model }),
+    json: values.json,
+  });
+  return runExitCode(result.outcome);
+}
+
+export interface RunExecution {
+  readonly input: string;
+  readonly role: AgentRole;
+  readonly model?: string;
+  readonly json: boolean;
+  readonly taskId?: string;
+}
+
+export interface RunResult {
+  readonly sessionId: string;
+  readonly outcome: TurnOutcome;
+}
+
+export async function executeRun(context: CommandContext, workspace: Workspace, execution: RunExecution): Promise<RunResult> {
+  const { input, role } = execution;
+  const modelRef = chooseModel(workspace, context, role, execution.model);
   const { provider, model } = createModelResolver(context.io.env, context.overrides)(modelRef);
   const skills = await loadSkills(workspace);
   for (const warning of skills.warnings) {
@@ -153,22 +172,22 @@ export async function runCommand(context: CommandContext, args: readonly string[
   }
   await ensureStateDir(workspace.dirs);
   const environment = createEnvironment(workspace, skills, workspace.root, "local");
-  const writable = role.data === "executor";
+  const writable = role === "executor";
   const tools = createTools(environment, skills).filter((tool) => writable || tool.capabilities.readOnly);
-  const name = role.data;
-  const opened: OpenedChannel | undefined = isInteractive(context, values.json) ? openPromptChannel(context) : undefined;
+  const name = role;
+  const opened: OpenedChannel | undefined = isInteractive(context, execution.json) ? openPromptChannel(context) : undefined;
   const permissions = createPermissionEngine(workspace, environment, skills, opened === undefined ? undefined : createTtyApprover(opened.channel, name));
-  const roleConfig = workspace.config.roles[role.data];
+  const roleConfig = workspace.config.roles[role];
   const maxWallMs = wallMs(workspace.config.budget);
   const spec: AgentSpec = {
     name,
-    role: role.data,
+    role: role,
     instructions: withExtra(writable ? WRITE_INSTRUCTIONS : READ_ONLY_INSTRUCTIONS, roleConfig?.instructions),
     model: modelRef,
     tools: tools.map((tool) => tool.name),
     permissions: { rules: [...workspace.config.rules], extraReadRoots: [...skills.readRoots()] },
     budget: {
-      maxTurns: roleConfig?.maxTurns ?? DEFAULT_MAX_TURNS[role.data],
+      maxTurns: roleConfig?.maxTurns ?? DEFAULT_MAX_TURNS[role],
       ...(workspace.config.budget.maxCostUsd === undefined ? {} : { maxCostUsd: workspace.config.budget.maxCostUsd }),
       ...(maxWallMs === undefined ? {} : { maxWallMs }),
     },
@@ -182,7 +201,7 @@ export async function runCommand(context: CommandContext, args: readonly string[
     ...(catalog === undefined ? {} : { skillCatalog: catalog }),
   });
   const store = await SessionStore.open({ dir: path.join(sessionsDir(workspace.dirs, workspace.root), id), redactor: context.redactor });
-  const human = values.json ? undefined : new HumanRenderer({ stdout: context.out, stderr: context.err, streamText: true });
+  const human = execution.json ? undefined : new HumanRenderer({ stdout: context.out, stderr: context.err, streamText: true });
   const listener: EventListener = human ?? new JsonlWriter(context.io.stdout, context.redactor);
   const controller = new AbortController();
   const uninstall = installInterruptHandler({
@@ -197,12 +216,13 @@ export async function runCommand(context: CommandContext, args: readonly string[
   const audit = await openAudit(context, workspace, id);
   audit.recorder.start({
     command: "run",
-    roles: { [role.data]: modelRef },
+    roles: { [role]: modelRef },
     budget: {
       ...(spec.budget.maxCostUsd === undefined ? {} : { maxCostUsd: spec.budget.maxCostUsd }),
       ...(spec.budget.maxWallMs === undefined ? {} : { maxWallMs: spec.budget.maxWallMs }),
     },
     task: input,
+    ...(execution.taskId === undefined ? {} : { taskId: execution.taskId }),
   });
   let outcome: TurnOutcome | undefined;
   let session: AgentSession | undefined;
@@ -216,10 +236,10 @@ export async function runCommand(context: CommandContext, args: readonly string[
       environment,
       permissions,
       redactor: context.redactor,
-      events: audit.recorder.tap(store, id, role.data),
+      events: audit.recorder.tap(store, id, role),
       systemPrompt: buildSystemPrompt({
         agentName: name,
-        role: role.data,
+        role: role,
         instructions: spec.instructions,
         platform: context.io.platform,
         root: workspace.root,
@@ -234,7 +254,7 @@ export async function runCommand(context: CommandContext, args: readonly string[
     opened?.close();
     await store.close();
     if (outcome !== undefined && session !== undefined) {
-      audit.recorder.runOutcome(outcome, role.data, session.ledger.snapshot());
+      audit.recorder.runOutcome(outcome, role, session.ledger.snapshot());
     }
     await audit.ledger.close();
   }
@@ -249,5 +269,5 @@ export async function runCommand(context: CommandContext, args: readonly string[
     }
     context.err.line(`bma: session ${id}, cost $${human.costUsd.toFixed(4)}`);
   }
-  return runExitCode(outcome);
+  return { sessionId: id, outcome };
 }
