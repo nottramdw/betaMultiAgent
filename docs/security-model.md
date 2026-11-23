@@ -287,11 +287,11 @@ Role instructions forbid the executor from creating commits. Turn limits: lead 4
 
 ### Pipeline
 
-1. The lead submits a plan with `submit_plan`. The plan defines `inScope` and `outOfScope` globs, a `verify` command list, and stop conditions. `inScope` globs must use forward slashes, be relative, and contain no `..`.
-2. The executor works in a git worktree (below), and reports with `submit_result`.
+1. The lead submits a plan with `submit_plan`. The plan defines `inScope` and `outOfScope` globs, a `verify` command list, stop conditions and acceptance criteria. `inScope` globs must use forward slashes, be relative, and contain no `..`. Criteria given with `--accept` cannot be changed by the lead.
+2. The executor works in a git worktree (below), and reports with `submit_result`. A reported stop condition must be one of the plan's; it ends the run with `needs-human` without verification, review or commit, and sensitive changes are still classified and reported first.
 3. The changeset is collected. Sensitive changes are classified, and gitignored writes are treated as sensitive.
 4. Verification commands run in order and stop at the first failure. Output tails are capped at 8 KiB and redacted.
-5. The reviewer receives the diff (or a stat table when the diff exceeds 200 KiB) and submits a verdict with `submit_review`: `approve`, `revise`, or `block`. The reviewer handoff is redacted.
+5. The reviewer receives the diff (or a stat table when the diff exceeds 200 KiB) and submits a verdict with `submit_review`: `approve`, `revise`, or `block`, with `PASS`, `FAIL` or `NOT_RUN` for every criterion. `approve` is rejected while a criterion is `FAIL`. The executor and reviewer handoffs are redacted. Text written by other agents (lead findings, executor reports, reviewer findings) is passed in fenced blocks labelled as self-reported data, not instructions.
 6. The commit is made only after the revision loop ends with no outstanding feedback. It is made on branch `bma/<runId>` in the worktree, with message `bma: <title>`. If the commit fails, the outcome reports `commitError`.
 
 ### Status and exit codes

@@ -12,7 +12,7 @@ function call(name: string, input: unknown): ScriptStep {
   return { respond: { parts: [{ type: "tool-call", id: `call-${String(counter)}`, name, input }] } };
 }
 
-function teamScript(): ScriptedProvider {
+function teamScript(criteria: Record<string, unknown> = { AC1: { status: "PASS", note: "Checked." } }): ScriptedProvider {
   return new ScriptedProvider(
     [
       call("submit_plan", {
@@ -23,10 +23,11 @@ function teamScript(): ScriptedProvider {
         outOfScope: [],
         verify: [{ argv: ["node", "-e", "require('fs').accessSync('src/hello.txt')"] }],
         stopConditions: [],
+        acceptance: ["The change is correct."],
       }),
       call("write_file", { path: "src/hello.txt", content: "hello\n" }),
       call("submit_result", { summary: "Added src/hello.txt." }),
-      call("submit_review", { verdict: "approve", findings: [], summary: "Looks right." }),
+      call("submit_review", { verdict: "approve", criteria, findings: [], summary: "Looks right." }),
     ],
     { id: "claude" },
   );
@@ -100,6 +101,7 @@ describe("bma team", () => {
           outOfScope: [],
           verify: [{ argv: ["node", "--version"] }],
           stopConditions: [],
+          acceptance: ["The change is correct."],
         }),
         call("submit_result", { summary: "Nothing to do." }),
       ],
@@ -107,9 +109,35 @@ describe("bma team", () => {
     );
     const result = await runBma(sandbox, ["team", "Add notes"], { providers: { claude: provider } });
     expect(result.stderr.text).toContain("workspace is not trusted");
-    expect(result.stdout.text).toContain("verification: skipped");
+    expect(result.stdout.text).toContain("verification (run by the harness): skipped");
     expect(result.stdout.text).toContain('["node","--version"]');
     expect(result.code).not.toBe(EXIT_OK);
+  });
+
+  it("passes --accept criteria to the lead and prints the reviewer assessment per criterion", { timeout: 60_000 }, async () => {
+    const sandbox = makeSandbox();
+    prepareRepo(sandbox);
+    expect((await runBma(sandbox, ["trust"], { stdin: "y\n", stdinIsTTY: true, stderrIsTTY: true })).code).toBe(EXIT_OK);
+    const provider = teamScript({ AC1: { status: "PASS", note: "Read it." }, AC2: { status: "NOT_RUN", note: "No test covers it." } });
+    const result = await runBma(sandbox, ["team", "Add a hello file", "--accept", "src/hello.txt contains hello", "--yes-verify"], {
+      providers: { claude: provider },
+    });
+    provider.assertDone();
+    const leadPrompt = JSON.stringify(provider.requests[0]?.history);
+    expect(leadPrompt).toContain("Acceptance criteria set by the user");
+    expect(leadPrompt).toContain("src/hello.txt contains hello");
+    expect(result.stdout.text).toContain("acceptance criteria (reviewer assessment):");
+    expect(result.stdout.text).toContain("AC1 PASS [user]: src/hello.txt contains hello");
+    expect(result.stdout.text).toContain("AC2 NOT_RUN [lead]: The change is correct.");
+    expect(result.stdout.text).toContain("No test covers it.");
+    expect(result.code).toBe(EXIT_OK);
+  });
+
+  it("rejects an empty --accept criterion", async () => {
+    const sandbox = makeSandbox();
+    const result = await runBma(sandbox, ["team", "Do it", "--accept", " "], { providers: { claude: teamScript() } });
+    expect(result.code).toBe(EXIT_USAGE);
+    expect(result.stderr.text).toContain("--accept");
   });
 
   it("refuses a dirty working tree unless allowed", { timeout: 60_000 }, async () => {

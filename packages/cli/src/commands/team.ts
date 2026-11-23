@@ -1,4 +1,5 @@
 import {
+  acceptanceProblems,
   runTeam,
   SessionStore,
   ulid,
@@ -21,7 +22,7 @@ import { runsDir, samePath, sessionsDir, worktreesDir } from "../config/paths.js
 import { readPromptFile } from "../input/prompt-file.js";
 import { HumanRenderer, type TerminalWriter } from "../output/human.js";
 import { JsonlWriter } from "../output/jsonl.js";
-import { displayArgv } from "../output/sanitize.js";
+import { displayArgv, displayValue } from "../output/sanitize.js";
 import { installInterruptHandler } from "../process/interrupt.js";
 import {
   createEnvironment,
@@ -87,7 +88,31 @@ export function printTeamSummary(out: TerminalWriter, outcome: TeamOutcome): voi
   if (outcome.worktreePath !== undefined) {
     out.line(`worktree: ${outcome.worktreePath}`);
   }
-  out.line(`verification: ${outcome.verification}`);
+  if (outcome.stopped !== undefined) {
+    out.line(`executor claim, stop condition: ${displayValue(outcome.stopped.condition)}`);
+    out.line(`  evidence: ${displayValue(outcome.stopped.evidence, 500)}`);
+  }
+  if (outcome.criteria !== undefined) {
+    out.line("acceptance criteria (reviewer assessment):");
+    for (const criterion of outcome.criteria) {
+      out.line(`  ${criterion.id} ${criterion.status} [${criterion.source}]: ${displayValue(criterion.text)}`);
+      if (criterion.status !== "PASS") {
+        out.line(`    ${displayValue(criterion.note, 500)}`);
+      }
+    }
+  } else if (outcome.acceptance !== undefined) {
+    out.line("acceptance criteria (not assessed):");
+    for (const criterion of outcome.acceptance) {
+      out.line(`  ${criterion.id} [${criterion.source}]: ${displayValue(criterion.text)}`);
+    }
+  }
+  if (outcome.open !== undefined) {
+    out.line("unfinished work (executor claim):");
+    for (const item of outcome.open) {
+      out.line(`  ${displayValue(item)}`);
+    }
+  }
+  out.line(`verification (run by the harness): ${outcome.verification}`);
   if (outcome.verification === "skipped" && outcome.unapprovedCommands.length > 0) {
     out.line("  not approved, so not run:");
     for (const command of outcome.unapprovedCommands) {
@@ -151,9 +176,15 @@ export async function teamCommand(context: CommandContext, args: readonly string
       "allow-dirty": { type: "boolean", default: false },
       "max-cost": { type: "string" },
       "yes-verify": { type: "boolean", default: false },
+      accept: { type: "string", multiple: true },
       json: { type: "boolean", default: false },
     },
   });
+  const acceptance = values.accept ?? [];
+  const invalidAcceptance = acceptanceProblems(acceptance);
+  if (invalidAcceptance.length > 0) {
+    throw usageError(`--accept: ${invalidAcceptance.join("; ")}`);
+  }
   const maxCost = parseCost(values["max-cost"]);
   const task = await readTask(context, values["task-file"], positionals);
   const workspace = await openWorkspace(context.io, context.redactor);
@@ -228,6 +259,7 @@ export async function teamCommand(context: CommandContext, args: readonly string
       root: workspace.root,
       trusted: workspace.trusted,
       allowDirty: values["allow-dirty"],
+      ...(acceptance.length === 0 ? {} : { acceptance }),
       roles,
       repo: createRepoOps({ repoRoot: workspace.root, ...repoOptions }),
       openRepo: (root) => createRepoOps({ repoRoot: root, ...repoOptions }),

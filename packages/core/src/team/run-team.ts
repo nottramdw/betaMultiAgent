@@ -11,16 +11,19 @@ import type { ModelInfo, Provider } from "../provider/provider.js";
 import type { Redactor } from "../redaction/redaction.js";
 import type { ToolDefinition } from "../tools/tool-definition.js";
 import { UsageLedger, type UsageTotals } from "../usage/usage.js";
+import { acceptanceProblems, criterionResults, mergeAcceptance, type AcceptanceCriterion, type CriterionResult } from "./acceptance.js";
 import {
+  createSubmitExecutorResultTool,
   createSubmitPlanTool,
   createSubmitResultTool,
   createSubmitReviewTool,
-  TeamPlanSchema,
+  executorResultSchema,
+  planSchema,
+  reviewSchema,
   TeamResultSchema,
-  TeamReviewSchema,
   type TeamCommand,
+  type TeamExecutorResult,
   type TeamPlan,
-  type TeamResult,
   type TeamReview,
 } from "./completion-tools.js";
 import { createDelegateTool, type DelegateReport, type DelegateTask } from "./delegate-tool.js";
@@ -82,12 +85,18 @@ export interface TeamOutcome {
   readonly commitError?: string;
   readonly plan?: TeamPlan;
   readonly review?: TeamReview;
+  readonly acceptance?: readonly AcceptanceCriterion[];
+  readonly criteria?: readonly CriterionResult[];
+  readonly stopped?: TeamStopReport;
+  readonly open?: readonly string[];
   readonly revisions: number;
   readonly planCorrections?: number;
   readonly sessions: readonly TeamSessionSummary[];
   readonly usage: UsageTotals;
   readonly usageByRole?: Partial<Record<AgentRole, UsageTotals>>;
 }
+
+export type TeamStopReport = NonNullable<TeamExecutorResult["stopped"]>;
 
 export interface ResolvedModel {
   readonly provider: Provider;
@@ -112,6 +121,7 @@ export interface RunTeamOptions {
   readonly root: string;
   readonly trusted: boolean;
   readonly allowDirty?: boolean;
+  readonly acceptance?: readonly string[];
   readonly roles: TeamRoles;
   readonly repo: RepoOps;
   readonly openRepo: (root: string) => RepoOps;
@@ -164,12 +174,10 @@ interface Changes {
   readonly outOfScope: readonly string[];
 }
 
-const COMPLETION_TOOLS: Readonly<Record<AgentRole, () => ToolDefinition>> = {
-  lead: createSubmitPlanTool,
-  researcher: createSubmitResultTool,
-  executor: createSubmitResultTool,
-  reviewer: createSubmitReviewTool,
-};
+interface BudgetStop {
+  readonly code: string;
+  readonly message: string;
+}
 
 const SKIPPED: VerificationSummary = { status: "skipped", runs: [], unapproved: [] };
 
@@ -242,7 +250,7 @@ class TeamRun {
   readonly #writes = new Set<string>();
   readonly #unapproved: TeamCommand[] = [];
   readonly #budgetListener: EventListener;
-  #exceeded: "cost" | "wall" | undefined;
+  #exceeded: BudgetStop | undefined;
   #context: ProjectContext | undefined;
   #mainEnvironment: Environment | undefined;
   #baseCommit: string | undefined;
@@ -255,6 +263,10 @@ class TeamRun {
   #verification: VerificationSummary = SKIPPED;
   #plan: TeamPlan | undefined;
   #review: TeamReview | undefined;
+  #acceptance: AcceptanceCriterion[] | undefined;
+  #criteria: CriterionResult[] | undefined;
+  #stopped: TeamStopReport | undefined;
+  #open: readonly string[] | undefined;
   #revisions = 0;
   #planCorrections = 0;
   #commit: string | undefined;
@@ -294,6 +306,10 @@ class TeamRun {
 
   async #flow(): Promise<void> {
     const options = this.#options;
+    const invalidAcceptance = acceptanceProblems(options.acceptance ?? []);
+    if (invalidAcceptance.length > 0) {
+      throw new RunStop("failed", "invalid-acceptance", invalidAcceptance.join("; "));
+    }
     await this.#phase("preflight");
     const preflight = await this.#mainGit(() => options.repo.preflight());
     const base = preflight.baseCommit;
@@ -318,6 +334,8 @@ class TeamRun {
     await this.#phase("plan");
     const { plan, verify } = await this.#makePlan(this.#mainEnvironment);
     this.#plan = plan;
+    const acceptance = mergeAcceptance(options.acceptance ?? [], plan.acceptance);
+    this.#acceptance = acceptance;
     const setup = await this.#approveSetup();
 
     this.#checkpoint();
@@ -331,12 +349,20 @@ class TeamRun {
     this.#setupBaseline = new Set(await this.#worktreeGit((repo) => repo.listIgnored()));
 
     await this.#phase("execute");
-    const executor = await this.#session("executor", environment, 0, []);
-    let outcome = await this.#run(executor, executorHandoff(this.#task, plan, verify.approved));
+    const resultSchema = executorResultSchema(plan.stopConditions);
+    const executor = await this.#session("executor", environment, 0, [createSubmitExecutorResultTool(resultSchema)]);
+    let outcome = await this.#run(
+      executor,
+      options.redactor.redact(executorHandoff({ task: this.#task, plan, acceptance, verify: verify.approved })),
+    );
     const maxRevisions = options.maxRevisions ?? MAX_REVISIONS;
     for (;;) {
-      const result = this.#parse(TeamResultSchema, outcome, "executor");
-      const feedback = await this.#evaluateRound(environment, plan, verify, result);
+      const result = this.#parse(resultSchema, outcome, "executor");
+      this.#open = result.open;
+      if (result.stopped !== undefined) {
+        await this.#reportStop(environment, plan, verify, result.stopped);
+      }
+      const feedback = await this.#evaluateRound(environment, plan, verify, acceptance, result);
       if (feedback === undefined) {
         break;
       }
@@ -360,10 +386,12 @@ class TeamRun {
   async #makePlan(environment: Environment): Promise<{ plan: TeamPlan; verify: CommandApproval }> {
     const options = this.#options;
     const delegate = createDelegateTool((task, signal) => this.#research(environment, task, signal));
-    const lead = await this.#session("lead", environment, 0, [delegate]);
-    let outcome = await this.#run(lead, leadHandoff(this.#task));
+    const userCriteria = options.acceptance ?? [];
+    const schema = planSchema(userCriteria.length === 0);
+    const lead = await this.#session("lead", environment, 0, [delegate, createSubmitPlanTool(schema)]);
+    let outcome = await this.#run(lead, leadHandoff(this.#task, userCriteria));
     for (let corrections = 0; ; corrections += 1) {
-      const plan = this.#parse(TeamPlanSchema, outcome, "lead");
+      const plan = this.#parse(schema, outcome, "lead");
       const verdicts = await evaluateCommands(plan.verify, options.commandPolicy, options.root);
       const problems = [
         ...scopeProblems(plan),
@@ -395,7 +423,7 @@ class TeamRun {
   }
 
   async #research(environment: Environment, task: DelegateTask, signal: AbortSignal): Promise<DelegateReport> {
-    const session = await this.#session("researcher", environment, 1, []);
+    const session = await this.#session("researcher", environment, 1, [createSubmitResultTool()]);
     const outcome = await session.run(researchHandoff(task), { signal, listeners: this.#listeners() });
     this.#recordOutcome(session.id, outcome);
     if (outcome.type === "completed") {
@@ -452,11 +480,30 @@ class TeamRun {
     }
   }
 
+  async #reportStop(environment: Environment, plan: TeamPlan, verify: CommandApproval, stopped: TeamStopReport): Promise<never> {
+    this.#stopped = stopped;
+    await this.#phase("collect", "the executor reported a stop condition");
+    const changes = await this.#collect(environment, plan);
+    this.#verification = { ...SKIPPED, unapproved: [...verify.approved, ...verify.unapproved] };
+    if (changes.sensitive.length > 0) {
+      this.#sensitiveChanges = [...changes.sensitive];
+      throw new RunStop(
+        "needs-human",
+        "sensitive-changes",
+        `changes need human review: ${changes.sensitive.join(", ")}; the executor also reported a stop condition`,
+      );
+    }
+    const scope =
+      changes.outOfScope.length === 0 ? "" : `; ${String(changes.outOfScope.length)} changed path(s) are outside the plan scope`;
+    throw new RunStop("needs-human", "stop-condition", `the executor stopped on a plan stop condition: ${stopped.condition}${scope}`);
+  }
+
   async #evaluateRound(
     environment: Environment,
     plan: TeamPlan,
     verify: CommandApproval,
-    result: TeamResult,
+    acceptance: readonly AcceptanceCriterion[],
+    result: TeamExecutorResult,
   ): Promise<string | undefined> {
     await this.#phase("collect");
     const changes = await this.#collect(environment, plan);
@@ -479,8 +526,9 @@ class TeamRun {
     }
 
     await this.#phase("review");
-    const review = await this.#reviewChange(environment, plan, result);
+    const review = await this.#reviewChange(environment, plan, acceptance, result);
     this.#review = review;
+    this.#criteria = criterionResults(acceptance, review);
     await this.#phase("review", review.verdict);
     if (review.verdict === "approve") {
       return undefined;
@@ -488,7 +536,7 @@ class TeamRun {
     if (review.verdict === "block") {
       throw new RunStop("blocked", "review-blocked", review.summary);
     }
-    return reviewFeedback(review);
+    return reviewFeedback(review, acceptance);
   }
 
   async #collect(environment: Environment, plan: TeamPlan): Promise<Changes> {
@@ -524,25 +572,31 @@ class TeamRun {
     return { status, runs, unapproved: verify.unapproved };
   }
 
-  async #reviewChange(environment: Environment, plan: TeamPlan, result: TeamResult): Promise<TeamReview> {
+  async #reviewChange(
+    environment: Environment,
+    plan: TeamPlan,
+    acceptance: readonly AcceptanceCriterion[],
+    result: TeamExecutorResult,
+  ): Promise<TeamReview> {
     const base = this.#requireBase();
-    const reviewer = await this.#session("reviewer", environment, 0, []);
+    const schema = reviewSchema(acceptance.map((criterion) => criterion.id));
+    const reviewer = await this.#session("reviewer", environment, 0, [createSubmitReviewTool(schema)]);
     const diff = await this.#worktreeGit((repo) => repo.diff(base, MAX_REVIEW_DIFF_BYTES));
     const reviewDiff: ReviewDiff = diff.truncated
       ? { stat: await this.#worktreeGit((repo) => repo.diffStat(base)) }
       : { text: diff.text };
     const input = this.#options.redactor.redact(
-      reviewerHandoff({ task: this.#task, plan, result, verification: this.#verification, diff: reviewDiff }),
+      reviewerHandoff({ task: this.#task, plan, acceptance, result, verification: this.#verification, diff: reviewDiff }),
     );
     const outcome = await this.#run(reviewer, input);
-    return this.#parse(TeamReviewSchema, outcome, "reviewer");
+    return this.#parse(schema, outcome, "reviewer");
   }
 
   async #session(
     role: AgentRole,
     environment: Environment,
     depth: number,
-    extra: readonly ToolDefinition[],
+    own: readonly ToolDefinition[],
   ): Promise<AgentSession> {
     const options = this.#options;
     const config = options.roles[role];
@@ -550,7 +604,7 @@ class TeamRun {
     const base = options
       .toolsFor(role, environment)
       .filter((tool) => !RESERVED_TEAM_TOOLS.has(tool.name) && (role === "executor" || tool.capabilities.readOnly));
-    const tools = [...base, ...extra, COMPLETION_TOOLS[role]()];
+    const tools = [...base, ...own];
     const spec = roleSpec(role, config, tools.map((tool) => tool.name));
     const id = ulid(this.#now().getTime());
     const log = options.openSessionLog === undefined ? new InMemoryEventSink(this.#now) : await options.openSessionLog(id, role);
@@ -641,7 +695,7 @@ class TeamRun {
 
   #abortStop(): RunStop {
     if (this.#exceeded !== undefined) {
-      return new RunStop("budget-exceeded", `budget-${this.#exceeded}`, `the run exceeded its ${this.#exceeded} budget`);
+      return new RunStop("budget-exceeded", this.#exceeded.code, this.#exceeded.message);
     }
     return new RunStop("aborted", "aborted", "the run was aborted");
   }
@@ -663,11 +717,26 @@ class TeamRun {
   }
 
   #checkCost(): void {
-    const max = this.#options.budget?.maxCostUsd;
-    if (max !== undefined && this.#exceeded === undefined && this.#ledger.snapshot().costUsd >= max) {
-      this.#exceeded = "cost";
-      this.#controller.abort();
+    if (this.#exceeded !== undefined) {
+      return;
     }
+    const max = this.#options.budget?.maxCostUsd;
+    if (max !== undefined && this.#ledger.snapshot().costUsd >= max) {
+      this.#exceed({ code: "budget-cost", message: "the run exceeded its cost budget" });
+      return;
+    }
+    for (const [role, ledger] of this.#roleLedgers) {
+      const cap = this.#options.roles[role].maxCostUsd;
+      if (cap !== undefined && ledger.snapshot().costUsd >= cap) {
+        this.#exceed({ code: "budget-role", message: `the ${role} role reached its cost cap of $${String(cap)}` });
+        return;
+      }
+    }
+  }
+
+  #exceed(stop: BudgetStop): void {
+    this.#exceeded ??= stop;
+    this.#controller.abort();
   }
 
   #attachSignals(): () => void {
@@ -685,8 +754,7 @@ class TeamRun {
       maxWallMs === undefined
         ? undefined
         : setTimeout(() => {
-            this.#exceeded ??= "wall";
-            this.#controller.abort();
+            this.#exceed({ code: "budget-wall", message: "the run exceeded its wall budget" });
           }, maxWallMs);
     timer?.unref();
     return () => {
@@ -770,6 +838,10 @@ class TeamRun {
       ...(this.#commitError === undefined ? {} : { commitError: this.#commitError }),
       ...(this.#plan === undefined ? {} : { plan: this.#plan }),
       ...(this.#review === undefined ? {} : { review: this.#review }),
+      ...(this.#acceptance === undefined ? {} : { acceptance: this.#acceptance }),
+      ...(this.#criteria === undefined ? {} : { criteria: this.#criteria }),
+      ...(this.#stopped === undefined ? {} : { stopped: this.#stopped }),
+      ...(this.#open === undefined || this.#open.length === 0 ? {} : { open: [...this.#open] }),
       revisions: this.#revisions,
       planCorrections: this.#planCorrections,
       sessions: this.#sessions.map((entry) => ({ ...entry })),

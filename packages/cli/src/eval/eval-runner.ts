@@ -70,11 +70,8 @@ function tail(text: string): string {
   return text.length <= TAIL_CHARS ? text : text.slice(-TAIL_CHARS);
 }
 
-export function taskPrompt(task: EvalTask): string {
-  if (task.accept.length === 0) {
-    return task.task;
-  }
-  return [task.task, "", "Acceptance criteria:", ...task.accept.map((item, index) => `${String(index + 1)}. ${item}`)].join("\n");
+export function teamArgv(task: EvalTask, maxCostUsd: number): string[] {
+  return ["team", task.task, ...task.accept.flatMap((item) => ["--accept", item]), "--yes-verify", "--json", "--max-cost", String(maxCostUsd)];
 }
 
 function childEnv(env: CliIo["env"]): Record<string, string> {
@@ -189,7 +186,7 @@ export async function runEvalTask(options: EvalRunOptions): Promise<EvalRunRecor
     await writeFile(userConfigFile(opened.dirs), userConfig(options.provider, options.maxCostUsd, options.maxWallMinutes));
     await ensureStateDir(opened.dirs);
     await grantTrust(opened.dirs, opened.root, opened.digest, io.now());
-    const argv = ["team", taskPrompt(task), "--yes-verify", "--json", "--max-cost", String(options.maxCostUsd)];
+    const argv = teamArgv(task, options.maxCostUsd);
     const exitCode = await options.main(argv, nested, options.overrides);
     const outcome = parseOutcome(stdout.text);
     const records = await readAuditLedger(auditDir(opened.dirs, opened.root), () => undefined);

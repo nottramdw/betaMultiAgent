@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { EXIT_OK, EXIT_USAGE } from "../src/cli-error.js";
 import { DEFAULT_TURN_PROFILE, estimateSuite, roleTurnsCost } from "../src/eval/eval-estimate.js";
 import { summarize } from "../src/eval/eval-metrics.js";
-import { judgeRun, taskPrompt, type EvalRunRecord } from "../src/eval/eval-runner.js";
+import { judgeRun, teamArgv, type EvalRunRecord } from "../src/eval/eval-runner.js";
 import { EvalTaskSchema, loadEvalSuite, type EvalTask } from "../src/eval/eval-suite.js";
 import { catalogModel } from "../src/wiring.js";
 import { git, initRepo, makeSandbox, makeTempDir, registerCleanup, runBma, writeTree } from "./cli-harness.js";
@@ -136,9 +136,9 @@ describe("benchmark suite", () => {
 });
 
 describe("eval scoring", () => {
-  it("appends acceptance criteria to the task prompt", () => {
-    expect(taskPrompt(task({ accept: ["a", "b"] }))).toBe("do it\n\nAcceptance criteria:\n1. a\n2. b");
-    expect(taskPrompt(task({}))).toBe("do it");
+  it("passes acceptance criteria to the team command as flags", () => {
+    expect(teamArgv(task({ accept: ["a", "b"] }), 2)).toEqual(["team", "do it", "--accept", "a", "--accept", "b", "--yes-verify", "--json", "--max-cost", "2"]);
+    expect(teamArgv(task({}), 2)).toEqual(["team", "do it", "--yes-verify", "--json", "--max-cost", "2"]);
   });
 
   it("judges approvals against the expectation and the hidden check", () => {
@@ -210,7 +210,7 @@ describe("bma eval", () => {
     return dir;
   }
 
-  const plan = (title: string) =>
+  const plan = (title: string, acceptance: readonly string[]) =>
     call("submit_plan", {
       title,
       summary: title,
@@ -219,6 +219,7 @@ describe("bma eval", () => {
       outOfScope: [],
       verify: [{ argv: ["node", "-e", "0"] }],
       stopConditions: [],
+      acceptance,
     });
 
   it("prints an estimate without provider keys and requires a cost cap to run", async () => {
@@ -240,13 +241,13 @@ describe("bma eval", () => {
     const suite = miniSuite();
     const provider = new ScriptedProvider(
       [
-        plan("Add hello"),
+        plan("Add hello", []),
         call("write_file", { path: "src/hello.txt", content: "hello\n" }),
         call("submit_result", { summary: "Added src/hello.txt." }),
-        call("submit_review", { verdict: "approve", findings: [], summary: "Correct." }),
-        plan("Fix shipOrder"),
+        call("submit_review", { verdict: "approve", criteria: { AC1: { status: "PASS", note: "Checked." } }, findings: [], summary: "Correct." }),
+        plan("Fix shipOrder", ["src/shipping.js ships the order."]),
         call("submit_result", { summary: "src/shipping.js does not exist; nothing changed." }),
-        call("submit_review", { verdict: "block", findings: [], summary: "The file to fix does not exist." }),
+        call("submit_review", { verdict: "block", criteria: { AC1: { status: "FAIL", note: "Missing file." } }, findings: [], summary: "The file to fix does not exist." }),
       ],
       { id: "claude" },
     );

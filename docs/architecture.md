@@ -167,7 +167,7 @@ sequenceDiagram
   CLI->>Run: runTeam(task, options)
   Run->>Repo: addWorktree(runId, base) on bma/runId
   Run->>Lead: plan (SUBMIT_PLAN)
-  Lead-->>Run: TeamPlan (title, steps, inScope, outOfScope, verify, stopConditions)
+  Lead-->>Run: TeamPlan (title, steps, inScope, outOfScope, verify, stopConditions, acceptance, findings)
   Run->>Exec: execute plan in worktree (SUBMIT_RESULT)
   Run->>Run: record writes, classify changes, run verify commands
   Run->>Rev: review diff (SUBMIT_REVIEW)
@@ -183,17 +183,17 @@ sequenceDiagram
 
 Phase rules:
 
-1. **Plan.** The lead produces a `TeamPlan`. Titles are at most 72 characters. Verification commands are argv arrays. Plan correction rounds are capped at `MAX_PLAN_CORRECTIONS = 2`.
-2. **Execute.** The executor works in the worktree with the tools for its role. Writes are recorded.
+1. **Plan.** The lead produces a `TeamPlan`. Titles are at most 72 characters. Verification commands are argv arrays. Plan correction rounds are capped at `MAX_PLAN_CORRECTIONS = 2`. Acceptance criteria from `--accept` are fixed; the lead may only add criteria, and must write at least one when the user gave none. [acceptance.ts](../packages/core/src/team/acceptance.ts) merges them, user criteria first, removes duplicates and assigns ids `AC1`..`ACn` (at most `MAX_ACCEPTANCE_CRITERIA = 10`, each at most 500 characters). Lead `findings` are passed on in a fenced block marked as self-reported data.
+2. **Execute.** The executor works in the worktree with the tools for its role. Writes are recorded. The `submit_result` schema for the run accepts `stopped.condition` only from the plan's `stopConditions`. A reported stop collects and classifies the changes, skips verification and review, keeps the worktree, makes no commit, and ends with `needs-human` (`stop-condition`, or `sensitive-changes` when sensitive files changed). Unfinished work is reported in `open`.
 3. **Scope check.** [scope-check.ts](../packages/core/src/team/scope-check.ts) rejects absolute paths, `..` segments, and backslashes. It classifies changes as sensitive (build, CI, package, hook, or agent configuration) or out of scope. Sensitive changes are listed in the outcome and summary.
 4. **Verify.** [verification-gate.ts](../packages/core/src/team/verification-gate.ts) runs the plan's commands in order and stops at the first failure. Commands must be approved first. `allow` entries run, `ask` entries need an approver or `--yes-verify`, and untrusted workspaces approve nothing. Output is kept to `OUTPUT_TAIL_BYTES = 8192`.
-5. **Review.** The reviewer receives the diff, limited to `MAX_REVIEW_DIFF_BYTES = 200 KiB`. Its verdict is `approve`, `revise`, or `block`. Findings have severity `blocker`, `major`, or `minor`. Revisions are capped at `MAX_REVISIONS = 2`.
+5. **Review.** The reviewer receives the diff, limited to `MAX_REVIEW_DIFF_BYTES = 200 KiB`. Executor reports reach it in fenced blocks marked as self-reported data. The `submit_review` schema for the run has one required key per criterion id, each `PASS`, `FAIL` or `NOT_RUN` with a note. Its verdict is `approve`, `revise`, or `block`; `approve` is rejected inside the session while any criterion is `FAIL`. Findings have severity `blocker`, `major`, or `minor`. Revisions are capped at `MAX_REVISIONS = 2`. The outcome carries `acceptance`, `criteria`, `stopped` and `open`.
 6. **Commit.** On approval, changes are committed on `bma/<runId>` with the message `bma: <title>`. Commit failures are reported as `commitError`.
 
 Other behavior:
 
 - `delegate` ([delegate-tool.ts](../packages/core/src/team/delegate-tool.ts)) runs up to `MAX_DELEGATE_TASKS = 4` sub-tasks in parallel. Delegation is rejected at depth greater than 0.
-- Budget: `#budgetListener` enforces `maxCostUsd`; `#attachSignals` enforces `maxWallMs`.
+- Budget: `#budgetListener` enforces `maxCostUsd` and the per-role `maxCostUsd` caps (code `budget-role`; the researcher cap covers all delegations together); `#attachSignals` enforces `maxWallMs`.
 - Handoff text is built in [handoff.ts](../packages/core/src/team/handoff.ts).
 
 ### Team statuses and exit codes
@@ -300,7 +300,7 @@ Entry: [`packages/cli/bin/bma.js`](../packages/cli/bin/bma.js) imports `runCli` 
 | Command | Behavior |
 |---|---|
 | `bma run` | One agent session. Flags: `--prompt`/`-p`, `--prompt-file`/`-f`, `--model`/`-m`, `--role` (default `executor`), `--json`. Session log is stored under the project's sessions directory. |
-| `bma team <task>` | Full team pipeline. Flags: `--task-file`/`-f`, `--allow-dirty`, `--max-cost`, `--yes-verify`, `--json`. Run directory is `<runsDir>/<runId>` with a `hooks/` subdirectory. |
+| `bma team <task>` | Full team pipeline. Flags: `--task-file`/`-f`, `--allow-dirty`, `--max-cost`, `--yes-verify`, `--accept` (repeatable), `--json`. Run directory is `<runsDir>/<runId>` with a `hooks/` subdirectory. |
 | `bma team clean` | Removes a run's worktree, and optionally branch `bma/<runId>` with `--delete-branch`. Lists uncommitted changes first. Outside a terminal, `--yes` is required. |
 | `bma sessions` | `list` (default), `show <id>`, `rm <id>`, `prune [--older-than <days>]` (default 30). Locked sessions are not removed by `rm` or `prune`. |
 | `bma models` | Prints the catalog of both providers. `--provider claude\|grok`, `--json`. |

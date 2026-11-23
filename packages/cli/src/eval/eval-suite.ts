@@ -1,11 +1,10 @@
-import { TEAM_ROLES, type AgentRole } from "@betamultiagent/core";
+import { MAX_ACCEPTANCE_CRITERIA, MAX_CRITERION_LENGTH, TEAM_ROLES, type AgentRole } from "@betamultiagent/core";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { usageError } from "../cli-error.js";
 
 const SLUG = /^[a-z0-9][a-z0-9-]*$/u;
-export const MAX_CRITERION_CHARS = 500;
 
 export const EvalTaskKindSchema = z.enum(["normal", "hard-to-verify", "trap"]);
 export type EvalTaskKind = z.infer<typeof EvalTaskKindSchema>;
@@ -17,7 +16,7 @@ export const EvalTaskSchema = z.strictObject({
   kind: EvalTaskKindSchema,
   fixture: z.string().regex(SLUG),
   task: z.string().min(1),
-  accept: z.array(z.string().min(1).max(MAX_CRITERION_CHARS)).default([]),
+  accept: z.array(z.string().trim().min(1).max(MAX_CRITERION_LENGTH)).max(MAX_ACCEPTANCE_CRITERIA).default([]),
   expect: z.enum(["approved", "not-approved"]),
   check: z.string().regex(/^[a-z0-9][a-z0-9-]*\.js$/u).optional(),
   turns: z.strictObject({ lead: turnCount, researcher: turnCount, executor: turnCount, reviewer: turnCount }).optional(),
