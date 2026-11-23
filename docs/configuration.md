@@ -39,6 +39,7 @@ Sources are combined in [`mergeConfig`](../packages/cli/src/config/merge.ts). Th
 | `env.passthrough` | applied | union with user list | ignored |
 | `skills.extraRoots` | applied | ignored, warning printed | ignored, warning printed |
 | `team.setup` | applied only when trusted and the project file has no `team.setup` | applied; replaces the user value | ignored; no setup commands run, including user-level ones |
+| `audit` | applied | ignored, warning printed | ignored, warning printed |
 
 Other sources, in relation to the file values:
 
@@ -91,6 +92,8 @@ Source: [`schema.ts`](../packages/cli/src/config/schema.ts). Every object is str
 | `skills.extraRoots` | array of absolute path strings | `[]` | Extra skill directories. Honored only in the user file. |
 | `team` | object | none | Team run settings. |
 | `team.setup` | array of argv arrays | `[]` | Commands run in the team worktree before work starts. Each element is an array of one or more strings, run without a shell. |
+| `audit` | object | none | Audit ledger settings. Honored only in the user file. |
+| `audit.retentionDays` | integer, at least 30 | `180` | Month files of the audit ledger older than this many days are deleted when a run opens the ledger. |
 
 ### Permission rule semantics
 
@@ -112,10 +115,11 @@ Validation runs in [`parseConfigText`](../packages/cli/src/config/load.ts) when 
 |------|----------|
 | Invalid JSON | Exit 2: `<file>: invalid JSON (...)`. A UTF-8 byte order mark is accepted. |
 | Credentials | Exit 2 if any key name anywhere in the file matches, case-insensitively: `api-key`, `apikey`, `api_key`, `token`, `secret`, `password`, `passwd`, `credential`, `private-key`, `private_key`, `auth`. The message lists the offending paths and asks for environment variables instead. |
-| Unknown keys | Exit 2 with the schema error. Applies to every strict object: top-level, `roles`, role objects, `permissions`, `budget`, `env`, `skills`, `team`. |
+| Unknown keys | Exit 2 with the schema error. Applies to every strict object: top-level, `roles`, role objects, `permissions`, `budget`, `env`, `skills`, `team`, `audit`. |
 | Model reference | Must match `^(claude\|grok):[A-Za-z0-9][A-Za-z0-9._-]*$`. Whether the model exists in the catalog is checked when the model is used. |
 | Passthrough names | Must match `^[A-Z_][A-Z0-9_]*$` and must not be a denied name. Exit 2 otherwise. |
 | Budget and turns | `maxCostUsd` must be positive; `maxWallMinutes` and `maxTurns` must be positive integers. |
+| Audit retention | `audit.retentionDays` must be an integer of at least 30. |
 
 Credentials belong in environment variables. The configuration cannot hold them, and the CLI redacts the values of `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `XAI_API_KEY` from its output.
 
@@ -193,10 +197,27 @@ Override with `BMA_HOME`, which takes precedence on every platform:
 |------|----------|
 | `<state>/projects/<key>/sessions/<ulid>/` | Session event logs for `bma run` and team role sessions. |
 | `<state>/projects/<key>/runs/<ulid>/` | Team run records and `hooks/`. |
+| `<state>/projects/<key>/audit/<YYYY-MM>.jsonl` | Audit ledger, one file per UTC month. |
 | `<state>/worktrees/<runId>/` | Git worktree for a team run. |
 | `<state>/trust.json` | Trust grants. |
 
 `<key>` is the first 16 hex characters of the SHA-256 of the workspace root path. Team branches are named `bma/<runId>`.
+
+### Audit ledger
+
+Source: [`audit-ledger.ts`](../packages/cli/src/audit/audit-ledger.ts), [`audit-recorder.ts`](../packages/cli/src/audit/audit-recorder.ts).
+
+`bma run` and `bma team` append redacted JSON lines to the audit ledger. Each record has `v`, `ts`, `runId` and `kind`. For `bma run`, `runId` is the session id.
+
+| `kind` | Fields |
+|--------|--------|
+| `run-start` | `command`; `roles` with `model` and `effort` per role (`provider-default` when not set); `budget`; `taskSha256`; `taskPrefix` (first 80 characters). |
+| `permission` | `role`, `sessionId`, `action` (`read`, `write`, `exec`), `target` (paths relative to the workspace root; argv truncated to 16 tokens of 120 characters), `allowed`, `source`, `approval`. |
+| `run-outcome` | `status`, `code`, `revisions`, `planCorrections`, `invalidInputs`, `usage`, `usageByRole`, `verification`, `approvedCommands` and `unapprovedCommands` with `source` (`tty`, `yes-verify`, `rule`, `untrusted-skip`, `not-approved`), `commit`, `branch`. |
+
+- Files are created with mode `0600` in a directory with mode `0700`.
+- A write error prints one warning and disables the ledger for the run; the run continues.
+- `bma sessions prune` and `bma team clean` do not touch the ledger. Retention is set by `audit.retentionDays`.
 
 Directories are created with mode `0700` (on non-Windows platforms). `bma doctor` warns when the state directory is accessible to other users, and when `BMA_HOME` is outside the user profile.
 

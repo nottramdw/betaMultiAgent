@@ -141,6 +141,16 @@ describe("mergeConfig", () => {
     expect(merged.passthrough).toEqual(["JAVA_HOME"]);
     expect(merged.setup).toEqual([["pnpm", "install"]]);
   });
+
+  it("reads audit retention only from the user configuration", () => {
+    expect(mergeConfig(user, project, true).auditRetentionDays).toBe(180);
+    const userAudit = parseConfigText("config.json", JSON.stringify({ audit: { retentionDays: 365 } }));
+    const projectAudit = parseConfigText("bma.config.json", JSON.stringify({ audit: { retentionDays: 30 } }));
+    const merged = mergeConfig(userAudit, projectAudit, true);
+    expect(merged.auditRetentionDays).toBe(365);
+    expect(merged.warnings.join("\n")).toMatch(/audit is only read from the user configuration/u);
+    expect(() => parseConfigText("config.json", JSON.stringify({ audit: { retentionDays: 29 } }))).toThrow();
+  });
 });
 
 describe("trust store", () => {

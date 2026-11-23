@@ -83,8 +83,10 @@ export interface TeamOutcome {
   readonly plan?: TeamPlan;
   readonly review?: TeamReview;
   readonly revisions: number;
+  readonly planCorrections?: number;
   readonly sessions: readonly TeamSessionSummary[];
   readonly usage: UsageTotals;
+  readonly usageByRole?: Partial<Record<AgentRole, UsageTotals>>;
 }
 
 export interface ResolvedModel {
@@ -234,6 +236,7 @@ class TeamRun {
   readonly #now: () => Date;
   readonly #controller = new AbortController();
   readonly #ledger = new UsageLedger("team");
+  readonly #roleLedgers = new Map<AgentRole, UsageLedger>();
   readonly #sessions: SessionEntry[] = [];
   readonly #logs: TeamSessionLog[] = [];
   readonly #writes = new Set<string>();
@@ -253,6 +256,7 @@ class TeamRun {
   #plan: TeamPlan | undefined;
   #review: TeamReview | undefined;
   #revisions = 0;
+  #planCorrections = 0;
   #commit: string | undefined;
   #commitError: string | undefined;
   #integrityFailed = false;
@@ -384,6 +388,7 @@ class TeamRun {
       if (corrections >= MAX_PLAN_CORRECTIONS) {
         throw new RunStop("failed", "invalid-plan", problems.join("; "));
       }
+      this.#planCorrections += 1;
       await this.#phase("plan", "correction requested");
       outcome = await this.#run(lead, planCorrection(problems));
     }
@@ -571,7 +576,7 @@ class TeamRun {
         createdAt: this.#now(),
       }),
       ...(this.#context === undefined ? {} : { projectContext: this.#context }),
-      ledger: this.#ledger.child(spec.name),
+      ledger: this.#roleLedger(role).child(spec.name),
       depth,
     });
   }
@@ -592,6 +597,15 @@ class TeamRun {
       throw new RunStop("failed", "invalid-completion", `the ${role} submitted a result that does not match its schema`);
     }
     return parsed.data;
+  }
+
+  #roleLedger(role: AgentRole): UsageLedger {
+    let ledger = this.#roleLedgers.get(role);
+    if (ledger === undefined) {
+      ledger = this.#ledger.child(role);
+      this.#roleLedgers.set(role, ledger);
+    }
+    return ledger;
   }
 
   #listeners(): EventListener[] {
@@ -757,8 +771,10 @@ class TeamRun {
       ...(this.#plan === undefined ? {} : { plan: this.#plan }),
       ...(this.#review === undefined ? {} : { review: this.#review }),
       revisions: this.#revisions,
+      planCorrections: this.#planCorrections,
       sessions: this.#sessions.map((entry) => ({ ...entry })),
       usage: this.#ledger.snapshot(),
+      usageByRole: Object.fromEntries([...this.#roleLedgers].map(([role, ledger]) => [role, ledger.snapshot()])),
     };
   }
 }

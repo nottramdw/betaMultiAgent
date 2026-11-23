@@ -412,6 +412,7 @@ Permissions:
 | Session lock (`session.lock`) | `0o600`, created with `wx` (exclusive). Contains pid, hostname, and token |
 | `trust.json` | `0o600` |
 | Hook directories | `0o700` |
+| Audit directory and month files | `0o700` and `0o600` |
 
 `bma doctor` warns on non-Windows systems when the state directory has any group or other permission bits (`mode & 0o077`). On Windows, POSIX mode bits are not enforced; the directory relies on the default profile ACLs.
 
@@ -425,6 +426,15 @@ Permissions:
 - Durable record types (`session-start`, `message`, `outcome`) are fsynced.
 - A trailing corrupt fragment is truncated when the store is opened.
 - A lock whose pid is no longer alive on the same host is considered stale.
+
+### Audit ledger
+
+[audit-ledger.ts](../packages/cli/src/audit/audit-ledger.ts) writes `<state>/projects/<key>/audit/<YYYY-MM>.jsonl`. Record fields are listed in [Configuration](./configuration.md#audit-ledger).
+
+- Every record is redacted before it is written. The task is stored as a SHA-256 digest and an 80-character prefix.
+- The ledger is under `<state>/projects/**`, so agent tools cannot read or write it, including through path arguments of `run_command`.
+- This protects the ledger from agent tools only. Verification and setup commands are repository code run with user permissions, and can modify any file the user can.
+- `bma sessions prune` and `bma team clean` leave the ledger intact. Old month files are removed by `audit.retentionDays`, which only the user configuration can set.
 
 ### Session commands
 

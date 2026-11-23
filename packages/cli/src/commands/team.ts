@@ -14,6 +14,8 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { createTtyApprover, createTtyCommandApprover } from "../approver/tty-approver.js";
+import { openAudit } from "../audit/open-audit.js";
+import { CommandApprovalTracker } from "../audit/audit-recorder.js";
 import { EXIT_BUDGET, EXIT_FAILED, EXIT_INTERRUPTED, EXIT_OK, EXIT_STOPPED, usageError } from "../cli-error.js";
 import { runsDir, samePath, sessionsDir, worktreesDir } from "../config/paths.js";
 import { readPromptFile } from "../input/prompt-file.js";
@@ -183,10 +185,13 @@ export async function teamCommand(context: CommandContext, args: readonly string
   };
   const opened: OpenedChannel | undefined = isInteractive(context, values.json) ? openPromptChannel(context) : undefined;
   let approveCommands: CommandApprover | undefined;
+  let tracker: CommandApprovalTracker | undefined;
   if (workspace.trusted && values["yes-verify"]) {
-    approveCommands = () => Promise.resolve(true);
+    tracker = new CommandApprovalTracker("yes-verify");
+    approveCommands = tracker.wrap(() => Promise.resolve(true));
   } else if (workspace.trusted && opened !== undefined) {
-    approveCommands = createTtyCommandApprover(opened.channel);
+    tracker = new CommandApprovalTracker("tty");
+    approveCommands = tracker.wrap(createTtyCommandApprover(opened.channel));
   }
   const human = values.json ? undefined : new HumanRenderer({ stdout: context.out, stderr: context.err, streamText: false });
   const jsonl = values.json ? new JsonlWriter(context.io.stdout, context.redactor) : undefined;
@@ -206,7 +211,17 @@ export async function teamCommand(context: CommandContext, args: readonly string
     ...(context.overrides.killProcessTrees === undefined ? {} : { killProcessTrees: context.overrides.killProcessTrees }),
   });
   const catalog = skillCatalog(skills);
-  let outcome: TeamOutcome;
+  const audit = await openAudit(context, workspace, runId);
+  audit.recorder.start({
+    command: "team",
+    roles: Object.fromEntries(Object.entries(roles).map(([role, config]) => [role, config.model])),
+    budget: {
+      ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
+      ...(maxWallMs === undefined ? {} : { maxWallMs }),
+    },
+    task,
+  });
+  let outcome: TeamOutcome | undefined;
   try {
     outcome = await runTeam(task, {
       runId,
@@ -232,7 +247,12 @@ export async function teamCommand(context: CommandContext, args: readonly string
         ...(maxWallMs === undefined ? {} : { maxWallMs }),
       },
       events: new TeeSink(store, listeners),
-      openSessionLog: (id) => SessionStore.open({ dir: path.join(sessionsDir(workspace.dirs, workspace.root), id), redactor: context.redactor }),
+      openSessionLog: async (id, role) =>
+        audit.recorder.tap(
+          await SessionStore.open({ dir: path.join(sessionsDir(workspace.dirs, workspace.root), id), redactor: context.redactor }),
+          id,
+          role,
+        ),
       redactor: context.redactor,
       ...(catalog === undefined ? {} : { skillCatalog: catalog }),
       listeners,
@@ -244,6 +264,10 @@ export async function teamCommand(context: CommandContext, args: readonly string
     uninstall();
     opened?.close();
     await store.close();
+    if (outcome !== undefined) {
+      audit.recorder.teamOutcome(outcome, workspace.trusted, tracker);
+    }
+    await audit.ledger.close();
   }
   if (jsonl !== undefined) {
     jsonl.writeResult("team-outcome", { outcome });

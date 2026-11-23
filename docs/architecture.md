@@ -282,6 +282,7 @@ Entry: [`packages/cli/bin/bma.js`](../packages/cli/bin/bma.js) imports `runCli` 
 | [cli-error.ts](../packages/cli/src/cli-error.ts) | Exit codes |
 | `commands/*.ts` | `run`, `team` (with `team clean`), `sessions`, `models`, `doctor`, `trust` |
 | [approver/tty-approver.ts](../packages/cli/src/approver/tty-approver.ts) | Interactive permission and command prompts |
+| `audit/*.ts` | Audit ledger: monthly JSONL files, retention, reader, and the session-log tap that records permissions and per-role cost |
 
 ### Exit codes
 
@@ -319,6 +320,10 @@ Resolved by [`resolveDirs`](../packages/cli/src/config/paths.ts):
 `BMA_HOME` overrides these into one directory with `state/` and `config/` subdirectories. Per-project state lives under `<state>/projects/<key>`, where `<key>` is the first 16 hex characters of the SHA-256 of the workspace root. Worktrees are under `<state>/worktrees`.
 
 `resolveWorkspaceRoot` refuses to run in the home directory, a filesystem root, or a directory that contains bma's own state.
+
+### Audit ledger
+
+`bma run` and `bma team` open an `AuditLedger` in `<state>/projects/<key>/audit`. An `AuditRecorder` wraps each session's event sink: it forwards every record unchanged, writes `permission` records, and counts tool results rejected as `INVALID_INPUT`. The run writes `run-start` before the first session and `run-outcome` after it ends. Per-role cost comes from `TeamOutcome.usageByRole`, which `runTeam` sums from one usage ledger per role. The core event protocol is unchanged. Record fields: [configuration.md](./configuration.md#audit-ledger).
 
 ### Wiring
 

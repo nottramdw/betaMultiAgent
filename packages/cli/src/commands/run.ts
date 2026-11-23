@@ -15,6 +15,7 @@ import {
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { createTtyApprover } from "../approver/tty-approver.js";
+import { openAudit } from "../audit/open-audit.js";
 import { EXIT_BUDGET, EXIT_FAILED, EXIT_INTERRUPTED, EXIT_OK, EXIT_STOPPED, usageError } from "../cli-error.js";
 import { sessionsDir } from "../config/paths.js";
 import { parseModelSpec } from "../config/schema.js";
@@ -193,9 +194,20 @@ export async function runCommand(context: CommandContext, args: readonly string[
     exit: context.io.exit,
     ...(context.overrides.killProcessTrees === undefined ? {} : { killProcessTrees: context.overrides.killProcessTrees }),
   });
-  let outcome: TurnOutcome;
+  const audit = await openAudit(context, workspace, id);
+  audit.recorder.start({
+    command: "run",
+    roles: { [role.data]: modelRef },
+    budget: {
+      ...(spec.budget.maxCostUsd === undefined ? {} : { maxCostUsd: spec.budget.maxCostUsd }),
+      ...(spec.budget.maxWallMs === undefined ? {} : { maxWallMs: spec.budget.maxWallMs }),
+    },
+    task: input,
+  });
+  let outcome: TurnOutcome | undefined;
+  let session: AgentSession | undefined;
   try {
-    const session = new AgentSession({
+    session = new AgentSession({
       id,
       spec,
       provider,
@@ -204,7 +216,7 @@ export async function runCommand(context: CommandContext, args: readonly string[
       environment,
       permissions,
       redactor: context.redactor,
-      events: store,
+      events: audit.recorder.tap(store, id, role.data),
       systemPrompt: buildSystemPrompt({
         agentName: name,
         role: role.data,
@@ -221,6 +233,10 @@ export async function runCommand(context: CommandContext, args: readonly string[
     uninstall();
     opened?.close();
     await store.close();
+    if (outcome !== undefined && session !== undefined) {
+      audit.recorder.runOutcome(outcome, role.data, session.ledger.snapshot());
+    }
+    await audit.ledger.close();
   }
   if (human !== undefined) {
     human.flush();

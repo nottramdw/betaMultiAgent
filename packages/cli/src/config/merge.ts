@@ -1,5 +1,5 @@
 import type { AgentRole, Rule } from "@betamultiagent/core";
-import type { BudgetConfig, ConfigFile, RoleConfigInput } from "./schema.js";
+import { DEFAULT_AUDIT_RETENTION_DAYS, type BudgetConfig, type ConfigFile, type RoleConfigInput } from "./schema.js";
 
 export interface EffectiveConfig {
   readonly trusted: boolean;
@@ -9,6 +9,7 @@ export interface EffectiveConfig {
   readonly passthrough: readonly string[];
   readonly extraSkillRoots: readonly string[];
   readonly setup: readonly (readonly string[])[];
+  readonly auditRetentionDays: number;
   readonly warnings: readonly string[];
 }
 
@@ -33,6 +34,9 @@ export function mergeConfig(user: ConfigFile, project: ConfigFile, trusted: bool
   if (project.skills?.extraRoots !== undefined) {
     warnings.push("skills.extraRoots is only read from the user configuration; the project value is ignored");
   }
+  if (project.audit !== undefined) {
+    warnings.push("audit is only read from the user configuration; the project value is ignored");
+  }
   const projectRules = project.permissions?.rules ?? [];
   const rules = [
     ...(user.permissions?.rules ?? []),
@@ -46,6 +50,7 @@ export function mergeConfig(user: ConfigFile, project: ConfigFile, trusted: bool
     passthrough: [...new Set([...(user.env?.passthrough ?? []), ...(trusted ? (project.env?.passthrough ?? []) : [])])],
     extraSkillRoots: user.skills?.extraRoots ?? [],
     setup: trusted ? (project.team?.setup ?? user.team?.setup ?? []) : [],
+    auditRetentionDays: user.audit?.retentionDays ?? DEFAULT_AUDIT_RETENTION_DAYS,
     warnings,
   };
 }

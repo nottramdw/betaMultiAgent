@@ -30,6 +30,9 @@ export type BudgetConfig = z.infer<typeof BudgetConfigSchema>;
 
 const CommandSchema = z.array(z.string().min(1)).min(1);
 
+export const MIN_AUDIT_RETENTION_DAYS = 30;
+export const DEFAULT_AUDIT_RETENTION_DAYS = 180;
+
 export const ConfigFileSchema = z.strictObject({
   roles: RolesSchema.optional(),
   permissions: z.strictObject({ rules: z.array(RuleSchema) }).optional(),
@@ -37,6 +40,7 @@ export const ConfigFileSchema = z.strictObject({
   env: z.strictObject({ passthrough: z.array(z.string()) }).optional(),
   skills: z.strictObject({ extraRoots: z.array(z.string().min(1)) }).optional(),
   team: z.strictObject({ setup: z.array(CommandSchema) }).optional(),
+  audit: z.strictObject({ retentionDays: z.number().int().min(MIN_AUDIT_RETENTION_DAYS).optional() }).optional(),
 });
 export type ConfigFile = z.infer<typeof ConfigFileSchema>;
 

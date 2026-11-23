@@ -476,6 +476,35 @@ describe("runTeam", () => {
     const outcome = await runTeam("Add a constant.", h.options);
     h.provider.assertDone();
     expect(outcome.status).toBe("approved");
+    expect(outcome.planCorrections).toBe(1);
+  });
+
+  it("totals usage per role across every session of that role", async () => {
+    const researched = (id: string): ScriptStep => ({
+      respond: { parts: [call(id, "submit_result", { summary: "Found." })], usage: { costUsd: 0.25, costSource: "exact" } },
+    });
+    const h = harness([
+      {
+        respond: {
+          parts: [call("delegate-1", "delegate", { tasks: [{ title: "One", prompt: "First?" }, { title: "Two", prompt: "Second?" }] })],
+          usage: { costUsd: 1, costSource: "exact" },
+        },
+      },
+      researched("research-1"),
+      researched("research-2"),
+      submitPlan(plan()),
+      write("src/a.ts"),
+      submitResult(),
+      submitReview("approve"),
+    ]);
+    const outcome = await runTeam("Add a constant.", h.options);
+    h.provider.assertDone();
+    expect(outcome.status).toBe("approved");
+    expect(outcome.sessions.filter((session) => session.role === "researcher")).toHaveLength(2);
+    expect(outcome.usageByRole?.researcher).toMatchObject({ turns: 2, costUsd: 0.5 });
+    expect(outcome.usageByRole?.lead).toMatchObject({ turns: 2, costUsd: 1 });
+    const roleTurns = Object.values(outcome.usageByRole ?? {}).reduce((sum, totals) => sum + totals.turns, 0);
+    expect(roleTurns).toBe(outcome.usage.turns);
   });
 
   it("fails after repeated invalid plans", async () => {
