@@ -4,6 +4,7 @@ const EXECUTABLE_SUFFIX = /\.(?:exe|com|cmd|bat)$/iu;
 
 export const EXACT_ONLY_PROGRAMS: ReadonlySet<string> = new Set([
   "git",
+  "gh",
   "npm",
   "npx",
   "pnpm",

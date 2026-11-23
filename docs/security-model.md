@@ -129,7 +129,7 @@ Rules are configured in `bma.config.json` (see [permission-types.ts](../packages
 
 - A rule must name a program. A leading `*` is rejected.
 - `*` is allowed only as the last token, and means "any trailing arguments".
-- For the programs in `EXACT_ONLY_PROGRAMS` (`git`, `npm`, `npx`, `pnpm`, `pnpx`, `yarn`, `bun`, `bunx`, `deno`, `corepack`, `node`, `python`, `python3`, `py`, `ruby`, `perl`, `php`, `bash`, `sh`, `zsh`, `pwsh`, `powershell`, `cmd`), prefix rules are rejected. Their argv must be listed exactly.
+- For the programs in `EXACT_ONLY_PROGRAMS` (`git`, `gh`, `npm`, `npx`, `pnpm`, `pnpx`, `yarn`, `bun`, `bunx`, `deno`, `corepack`, `node`, `python`, `python3`, `py`, `ruby`, `perl`, `php`, `bash`, `sh`, `zsh`, `pwsh`, `powershell`, `cmd`), prefix rules are rejected. Their argv must be listed exactly.
 - An allow rule whose program token contains a path separator is ignored, so a rule cannot be satisfied by an arbitrary binary at a chosen path.
 
 Git hard denies (`gitHardDenyReason`, always enforced):
@@ -194,7 +194,9 @@ Source: [../packages/tools/src/process/child-env.ts](../packages/tools/src/proce
 
 - Only names in `ALLOWED_NAMES` are inherited from the parent environment.
 - Names starting with `ANTHROPIC_` or `XAI_` are never passed to children.
-- Forced values: `GIT_TERMINAL_PROMPT=0`, `GIT_PAGER=cat`, `PAGER=cat`, `NO_COLOR=1`.
+- Forced values: `GIT_TERMINAL_PROMPT=0`, `GIT_PAGER=cat`, `PAGER=cat`, `NO_COLOR=1`, `BMA_AGENT_CHILD=1`.
+- When `BMA_AGENT_CHILD=1`, `bma` refuses maintenance and approval commands with exit 4: `trust`, `team clean`, `sessions rm`, `sessions prune` and `task cancel`. A command run by an agent or by harness verification therefore cannot remove state or grant trust. Children never receive API keys, so a nested `bma` cannot call a model.
+- Publish commands (`npm publish`, `pnpm publish`, `yarn publish`, `gh release`) are not hard-denied. Like any other command they need an exec allow rule or approval; `npm`, `pnpm`, `yarn` and `gh` accept only exact-argv rules.
 - Defaults: `PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8`. On Windows, `NoDefaultCurrentDirectoryInExePath=1`.
 - `envPassthrough` from configuration adds names, but the config loader rejects denied names (see [Secrets, output, and state](#secrets-output-and-state)).
 

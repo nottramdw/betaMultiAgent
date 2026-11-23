@@ -295,6 +295,7 @@ Set by bma in every child process:
 | `GIT_PAGER` | `cat` |
 | `PAGER` | `cat` |
 | `NO_COLOR` | `1` |
+| `BMA_AGENT_CHILD` | `1` |
 | `PYTHONUTF8` | `1` (only if not already present) |
 | `PYTHONIOENCODING` | `utf-8` (only if not already present) |
 | `NoDefaultCurrentDirectoryInExePath` | `1` (Windows only) |

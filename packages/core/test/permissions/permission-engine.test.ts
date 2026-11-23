@@ -161,7 +161,7 @@ describe("exec rules", () => {
     expect((await subject.evaluate(exec("cargo", "test", "--workspace"))).decision).toBe("allow");
   });
 
-  it.each([["git"], ["pnpm"], ["node"], ["powershell"]])("rejects prefix rules for %s", (program) => {
+  it.each([["git"], ["gh"], ["pnpm"], ["node"], ["powershell"]])("rejects prefix rules for %s", (program) => {
     expect(() => engine({ rules: [{ kind: "exec", match: [program, "*"], decision: "allow" }] })).toThrow(
       PermissionConfigError,
     );

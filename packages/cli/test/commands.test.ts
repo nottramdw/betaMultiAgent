@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from "../src/cli-error.js";
+import { EXIT_FAILED, EXIT_OK, EXIT_STOPPED, EXIT_USAGE } from "../src/cli-error.js";
 import { makeSandbox, registerCleanup, runBma, writeTree, type Sandbox } from "./cli-harness.js";
 
 registerCleanup();
@@ -40,6 +40,16 @@ describe("bma entry point", () => {
     const bad = await runBma(sandbox, ["models", "--nope"]);
     expect(bad.code).toBe(EXIT_USAGE);
     expect(bad.stderr.text).toContain("bma:");
+  });
+
+  it("refuses maintenance commands in processes started by an agent", async () => {
+    const sandbox = makeSandbox();
+    for (const argv of [["trust"], ["team", "clean", "--all", "--yes"], ["sessions", "prune"], ["sessions", "rm", "x"], ["task", "cancel", "abcd"]]) {
+      const result = await runBma(sandbox, argv, { env: { BMA_AGENT_CHILD: "1" } });
+      expect(result.code, argv.join(" ")).toBe(EXIT_STOPPED);
+      expect(result.stderr.text).toContain("not available to processes started by an agent");
+    }
+    expect((await runBma(sandbox, ["models"], { env: { BMA_AGENT_CHILD: "1" } })).code).toBe(EXIT_OK);
   });
 });
 

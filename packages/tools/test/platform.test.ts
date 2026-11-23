@@ -84,6 +84,8 @@ describe("buildChildEnv", () => {
     expect(env["PYTHONIOENCODING"]).toBe("utf-8");
     expect(env["GIT_TERMINAL_PROMPT"]).toBe("0");
     expect(env["NO_COLOR"]).toBe("1");
+    expect(env["BMA_AGENT_CHILD"]).toBe("1");
+    expect(buildChildEnv({ baseEnv: { ...base, BMA_AGENT_CHILD: "0" }, platform: "linux", extra: { BMA_AGENT_CHILD: "0" } })["BMA_AGENT_CHILD"]).toBe("1");
   });
 
   it("matches names case-insensitively on win32 and keeps the original key", () => {

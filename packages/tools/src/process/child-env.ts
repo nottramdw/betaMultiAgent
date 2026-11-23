@@ -30,6 +30,7 @@ const FORCED: Readonly<Record<string, string>> = {
   GIT_PAGER: "cat",
   PAGER: "cat",
   NO_COLOR: "1",
+  BMA_AGENT_CHILD: "1",
 };
 
 const DEFAULTS: Readonly<Record<string, string>> = {

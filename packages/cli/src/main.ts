@@ -1,6 +1,6 @@
 import { TeamConfigError } from "@betamultiagent/core";
 import { processIo, type CliIo } from "./cli-io.js";
-import { CliError, EXIT_FAILED, EXIT_OK, EXIT_USAGE, errorMessage } from "./cli-error.js";
+import { CliError, EXIT_FAILED, EXIT_OK, EXIT_STOPPED, EXIT_USAGE, errorMessage } from "./cli-error.js";
 import { createCommandContext, type CommandContext, type MainOverrides } from "./commands/command-context.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { evalCommand } from "./commands/eval.js";
@@ -76,6 +76,25 @@ function redirectConsole(context: CommandContext): () => void {
   };
 }
 
+export const AGENT_CHILD_VARIABLE = "BMA_AGENT_CHILD";
+
+function maintenanceAction(name: string, args: readonly string[]): string | undefined {
+  const [action] = args;
+  if (name === "trust") {
+    return "bma trust";
+  }
+  if (name === "team" && action === "clean") {
+    return "bma team clean";
+  }
+  if (name === "sessions" && (action === "rm" || action === "prune")) {
+    return `bma sessions ${action}`;
+  }
+  if (name === "task" && action === "cancel") {
+    return `bma task ${action}`;
+  }
+  return undefined;
+}
+
 function wantsJson(args: readonly string[]): boolean {
   return args.includes("--json");
 }
@@ -108,6 +127,11 @@ export async function main(argv: readonly string[], io: CliIo, overrides: MainOv
   if (args.includes("--help") || args.includes("-h")) {
     context.out.write(HELP);
     return EXIT_OK;
+  }
+  const maintenance = io.env[AGENT_CHILD_VARIABLE] === "1" ? maintenanceAction(name, args) : undefined;
+  if (maintenance !== undefined) {
+    context.err.line(`bma: ${maintenance} is not available to processes started by an agent (${AGENT_CHILD_VARIABLE} is set)`);
+    return EXIT_STOPPED;
   }
   const restore = wantsJson(args) ? redirectConsole(context) : undefined;
   try {
