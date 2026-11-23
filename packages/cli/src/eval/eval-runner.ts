@@ -1,4 +1,4 @@
-import { TEAM_ROLES, type AgentRole, type TeamOutcome, type TeamStatus } from "@betamultiagent/core";
+import type { AgentRole, TeamOutcome, TeamStatus } from "@betamultiagent/core";
 import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -10,8 +10,9 @@ import type { MainOverrides } from "../commands/command-context.js";
 import { auditDir, userConfigFile } from "../config/paths.js";
 import { grantTrust } from "../config/trust.js";
 import { CREDENTIAL_VARIABLES, createCliRedactor, ensureStateDir, openWorkspace } from "../wiring.js";
-import { providerRoles, type EvalProvider } from "./eval-estimate.js";
+import { JUDGE_TIMEOUT_MS, MAX_JUDGE_DIFF_BYTES, runJudge, type JudgeRecord, type JudgeTarget } from "./eval-judge.js";
 import type { EvalSuite, EvalTask } from "./eval-suite.js";
+import type { EvalRoleConfig } from "./eval-variant.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -24,7 +25,9 @@ export interface EvalRunOptions {
   readonly suite: EvalSuite;
   readonly task: EvalTask;
   readonly attempt: number;
-  readonly provider: EvalProvider;
+  readonly roles: EvalRoleConfig;
+  readonly extraRoots: readonly string[];
+  readonly judges: readonly JudgeTarget[];
   readonly maxCostUsd: number;
   readonly maxWallMinutes: number;
   readonly io: CliIo;
@@ -54,6 +57,7 @@ export interface EvalRunRecord {
   readonly costByRole: Partial<Record<AgentRole, number>>;
   readonly turnsByRole: Partial<Record<AgentRole, number>>;
   readonly durationMs: number;
+  readonly judges?: readonly JudgeRecord[];
   readonly workDir?: string;
 }
 
@@ -95,18 +99,18 @@ async function seedRepository(workspace: string, env: Record<string, string>): P
   await git(workspace, env, ["commit", "-q", "-m", "fixture"]);
 }
 
-function userConfig(provider: EvalProvider, maxCostUsd: number, maxWallMinutes: number): string {
-  const roles = providerRoles(provider);
+function userConfig(options: EvalRunOptions): string {
   return `${JSON.stringify(
     {
-      roles: Object.fromEntries(TEAM_ROLES.map((role) => [role, { model: `${roles[role].model.provider}:${roles[role].model.id}` }])),
+      roles: options.roles,
+      ...(options.extraRoots.length === 0 ? {} : { skills: { extraRoots: options.extraRoots } }),
       permissions: {
         rules: [
           { kind: "write", match: "**", decision: "allow" },
           { kind: "exec", match: ["node", "--test"], decision: "allow" },
         ],
       },
-      budget: { maxCostUsd, maxWallMinutes },
+      budget: { maxCostUsd: options.maxCostUsd, maxWallMinutes: options.maxWallMinutes },
     },
     null,
     2,
@@ -149,6 +153,36 @@ async function runCheck(
   }
 }
 
+async function collectDiff(worktree: string, baseCommit: string, env: Record<string, string>): Promise<{ text: string; truncated: boolean }> {
+  await git(worktree, env, ["add", "--all"]);
+  const result = await execFileAsync("git", ["diff", "--cached", "--no-color", "--no-ext-diff", baseCommit], {
+    cwd: worktree,
+    env,
+    windowsHide: true,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  const bytes = Buffer.from(result.stdout, "utf8");
+  return bytes.length <= MAX_JUDGE_DIFF_BYTES
+    ? { text: result.stdout, truncated: false }
+    : { text: bytes.subarray(0, MAX_JUDGE_DIFF_BYTES).toString("utf8"), truncated: true };
+}
+
+async function gradeRun(options: EvalRunOptions, outcome: TeamOutcome | undefined, env: Record<string, string>): Promise<JudgeRecord[] | undefined> {
+  if (options.judges.length === 0) {
+    return undefined;
+  }
+  if (outcome?.worktreePath === undefined || outcome.baseCommit === undefined) {
+    return options.judges.map((judge) => ({ model: judge.label, status: "skipped", message: "the run left no worktree to grade", costUsd: 0 }));
+  }
+  const diff = await collectDiff(outcome.worktreePath, outcome.baseCommit, env);
+  const records: JudgeRecord[] = [];
+  for (const judge of options.judges) {
+    const input = { task: options.task, diff: diff.text, diffTruncated: diff.truncated, verification: outcome.verificationRuns };
+    records.push(await runJudge(judge, input, AbortSignal.timeout(JUDGE_TIMEOUT_MS)));
+  }
+  return records;
+}
+
 export function judgeRun(
   task: EvalTask,
   approved: boolean,
@@ -183,7 +217,7 @@ export async function runEvalTask(options: EvalRunOptions): Promise<EvalRunRecor
     await seedRepository(workspace, env);
     const opened = await openWorkspace(nested, createCliRedactor(nested.env));
     await mkdir(opened.dirs.config, { recursive: true });
-    await writeFile(userConfigFile(opened.dirs), userConfig(options.provider, options.maxCostUsd, options.maxWallMinutes));
+    await writeFile(userConfigFile(opened.dirs), userConfig(options));
     await ensureStateDir(opened.dirs);
     await grantTrust(opened.dirs, opened.root, opened.digest, io.now());
     const argv = teamArgv(task, options.maxCostUsd);
@@ -195,6 +229,7 @@ export async function runEvalTask(options: EvalRunOptions): Promise<EvalRunRecor
       task.check !== undefined && outcome?.worktreePath !== undefined
         ? await runCheck(path.join(options.suite.dir, "checks", task.check), outcome.worktreePath, outcome.baseCommit, env)
         : undefined;
+    const judges = await gradeRun(options, outcome, env);
     const approved = outcome?.status === "approved";
     const verdict = judgeRun(task, approved, check?.passed);
     const byRole = outcome?.usageByRole ?? {};
@@ -217,6 +252,7 @@ export async function runEvalTask(options: EvalRunOptions): Promise<EvalRunRecor
       costByRole: Object.fromEntries(Object.entries(byRole).map(([role, usage]) => [role, usage.costUsd])),
       turnsByRole: Object.fromEntries(Object.entries(byRole).map(([role, usage]) => [role, usage.turns])),
       durationMs: Date.now() - started,
+      ...(judges === undefined ? {} : { judges }),
       ...(options.keep ? { workDir: base } : {}),
     };
   } catch (error) {

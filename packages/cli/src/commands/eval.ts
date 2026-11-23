@@ -1,21 +1,28 @@
-import { TEAM_ROLES } from "@betamultiagent/core";
+import { TEAM_ROLES, type ModelRef } from "@betamultiagent/core";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { EXIT_FAILED, EXIT_OK, usageError } from "../cli-error.js";
-import { estimateSuite, providerRoles, type EvalProvider, type SuiteEstimate } from "../eval/eval-estimate.js";
+import { parseModelSpec } from "../config/schema.js";
+import { compareReports, loadReport, type EvalComparison, type MetricDelta, type MetricValue } from "../eval/eval-compare.js";
+import { estimateSuite, modelLabel, providerRoles, type EvalProvider, type SuiteEstimate } from "../eval/eval-estimate.js";
+import type { JudgeTarget } from "../eval/eval-judge.js";
 import { summarize, type EvalSummary, type RateMetric } from "../eval/eval-metrics.js";
 import { runEvalTask, type EvalRunRecord, type MainEntry } from "../eval/eval-runner.js";
 import { loadEvalSuite, selectTasks } from "../eval/eval-suite.js";
+import { evalRoleConfig, loadVariant, roleModels, type EvalVariant } from "../eval/eval-variant.js";
 import type { TerminalWriter } from "../output/human.js";
 import { JsonlWriter } from "../output/jsonl.js";
-import { catalogModel } from "../wiring.js";
+import { catalogModel, createModelResolver } from "../wiring.js";
 import type { CommandContext } from "./command-context.js";
 
 export const EVAL_USAGE =
-  "usage: bma eval <suite-dir> --provider claude|grok (--estimate | --max-cost <usd>) [--task <id>]... [--repeat <n>] [--max-wall-minutes <n>] [--out <file>] [--keep] [--json]";
+  "usage: bma eval <suite-dir> --provider claude|grok (--estimate | --max-cost <usd>) [--variant <file>] [--judge <provider>[:<model>]]... [--task <id>]... [--repeat <n>] [--max-wall-minutes <n>] [--out <file>] [--keep] [--json]";
+
+export const EVAL_COMPARE_USAGE = "usage: bma eval compare <a.json> <b.json> [--json]";
 
 const DEFAULT_WALL_MINUTES = 20;
+const MAX_JUDGES = 2;
 
 function positiveNumber(flag: string, text: string | undefined): number | undefined {
   if (text === undefined) {
@@ -43,6 +50,18 @@ function parseProvider(text: string | undefined): EvalProvider {
   return text;
 }
 
+function parseJudges(texts: readonly string[]): ModelRef[] {
+  if (texts.length > MAX_JUDGES) {
+    throw usageError(`at most ${String(MAX_JUDGES)} --judge options are allowed`);
+  }
+  const judges = texts.map((text) => (text === "claude" || text === "grok" ? providerRoles(text).reviewer.model : parseModelSpec(text)));
+  const labels = judges.map((judge) => modelLabel(judge));
+  if (new Set(labels).size !== labels.length) {
+    throw usageError(`--judge models must differ, got ${labels.join(", ")}`);
+  }
+  return judges;
+}
+
 function usd(value: number): string {
   return `$${value.toFixed(4)}`;
 }
@@ -59,6 +78,9 @@ function printEstimate(out: TerminalWriter, estimate: SuiteEstimate): void {
       return entry === undefined || entry.turns === 0 ? [] : [`${role} ${entry.model} x${String(entry.turns)} ${usd(entry.costUsd)}`];
     });
     out.line(`  ${task.taskId}: ${usd(task.costUsd)} (${roles.join(", ")})`);
+  }
+  for (const judge of estimate.judges) {
+    out.line(`  judge ${judge.model}: ${usd(judge.costUsd)} per run, at most ${usd(judge.maxCostUsd)}`);
   }
   out.line(`expected: ${usd(estimate.expectedUsd)}${estimate.capUsd === undefined ? "" : `, hard cap: ${usd(estimate.capUsd)}`}`);
   if (estimate.unpriced.length > 0) {
@@ -81,6 +103,75 @@ function printSummary(out: TerminalWriter, summary: EvalSummary): void {
   });
   out.line(`cost: ${usd(summary.costUsd)}${roles.length === 0 ? "" : ` (${roles.join(", ")})`}`);
   out.line(`statuses: ${JSON.stringify(summary.statuses)}${Object.keys(summary.codes).length === 0 ? "" : `, codes: ${JSON.stringify(summary.codes)}`}`);
+  for (const judge of summary.judges) {
+    out.line(
+      `judge ${judge.model}: graded ${String(judge.graded)}, errors ${String(judge.errors)}, skipped ${String(judge.skipped)}, pass ${percent(judge.passed)}, accuracy ${percent(judge.accuracy)}, agrees with reviewer ${percent(judge.reviewerAgreement)}, cost ${usd(judge.costUsd)}`,
+    );
+  }
+  if (summary.judgeAgreement !== null) {
+    out.line(`judges agree: ${percent(summary.judgeAgreement)}`);
+  }
+}
+
+function metricText(metric: MetricDelta, value: MetricValue): string {
+  if (value.value === null) {
+    return "n/a";
+  }
+  if (metric.unit === "rate") {
+    return `${String(value.count ?? 0)}/${String(value.runs ?? 0)} (${(value.value * 100).toFixed(0)}%)`;
+  }
+  return metric.unit === "usd" ? usd(value.value) : value.value.toFixed(2);
+}
+
+function deltaText(metric: MetricDelta): string {
+  if (metric.delta === null) {
+    return "n/a";
+  }
+  const sign = metric.delta > 0 ? "+" : metric.delta < 0 ? "-" : "";
+  const size = Math.abs(metric.delta);
+  if (metric.unit === "rate") {
+    return `${sign}${(size * 100).toFixed(0)} pp`;
+  }
+  return `${sign}${metric.unit === "usd" ? usd(size) : size.toFixed(2)}`;
+}
+
+function printComparison(out: TerminalWriter, comparison: EvalComparison): void {
+  out.line(`A: ${comparison.a.label} (${comparison.a.file})`);
+  out.line(`B: ${comparison.b.label} (${comparison.b.file})`);
+  const rows = comparison.metrics.map((metric) => [metric.name, metricText(metric, metric.a), metricText(metric, metric.b), deltaText(metric)]);
+  const widths = [0, 1, 2].map((column) => Math.max(...rows.map((row) => row[column]?.length ?? 0)));
+  for (const row of rows) {
+    out.line(`  ${row.map((cell, column) => (column < 3 ? cell.padEnd(widths[column] ?? 0) : cell)).join("  ")}`);
+  }
+  out.line("tasks (correct runs):");
+  for (const task of comparison.tasks) {
+    const tally = (value: { correct: number; runs: number } | null): string => (value === null ? "-" : `${String(value.correct)}/${String(value.runs)}`);
+    out.line(`  ${task.taskId}: A ${tally(task.a)}, B ${tally(task.b)}${task.changed ? "  changed" : ""}`);
+  }
+}
+
+async function compareCommand(context: CommandContext, args: readonly string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: [...args],
+    allowPositionals: true,
+    strict: true,
+    options: { json: { type: "boolean", default: false } },
+  });
+  const [first, second, ...extra] = positionals;
+  if (first === undefined || second === undefined || extra.length > 0) {
+    throw usageError(EVAL_COMPARE_USAGE);
+  }
+  const [a, b] = await Promise.all([loadReport(path.resolve(context.io.cwd, first)), loadReport(path.resolve(context.io.cwd, second))]);
+  const comparison = compareReports(a, b);
+  if (values.json) {
+    new JsonlWriter(context.io.stdout, context.redactor).writeResult("eval-compare", { comparison });
+    return EXIT_OK;
+  }
+  printComparison(context.out, comparison);
+  for (const warning of comparison.warnings) {
+    context.err.line(`bma: warning: ${warning}`);
+  }
+  return EXIT_OK;
 }
 
 function describeRun(record: EvalRunRecord): string {
@@ -89,18 +180,23 @@ function describeRun(record: EvalRunRecord): string {
   return `${record.taskId}#${String(record.attempt)}: ${record.status}${code}${check}, ${record.correct ? "as expected" : "NOT as expected"}, ${usd(record.costUsd)}`;
 }
 
-function defaultOutFile(suiteDir: string, provider: EvalProvider, now: Date): string {
+function defaultOutFile(suiteDir: string, provider: EvalProvider, variant: EvalVariant | undefined, now: Date): string {
   const stamp = now.toISOString().replace(/[:.]/gu, "-").replace("T", "_").slice(0, 19);
-  return path.join(suiteDir, "results", `${stamp}-${provider}.json`);
+  return path.join(suiteDir, "results", `${stamp}-${provider}${variant === undefined ? "" : `-${variant.name}`}.json`);
 }
 
 export async function evalCommand(context: CommandContext, args: readonly string[], main: MainEntry): Promise<number> {
+  if (args[0] === "compare") {
+    return compareCommand(context, args.slice(1));
+  }
   const { values, positionals } = parseArgs({
     args: [...args],
     allowPositionals: true,
     strict: true,
     options: {
       provider: { type: "string" },
+      variant: { type: "string" },
+      judge: { type: "string", multiple: true, default: [] },
       task: { type: "string", multiple: true, default: [] },
       repeat: { type: "string" },
       "max-cost": { type: "string" },
@@ -119,9 +215,13 @@ export async function evalCommand(context: CommandContext, args: readonly string
   const repeat = positiveInteger("--repeat", values.repeat, 1);
   const maxCostUsd = positiveNumber("--max-cost", values["max-cost"]);
   const maxWallMinutes = positiveInteger("--max-wall-minutes", values["max-wall-minutes"], DEFAULT_WALL_MINUTES);
+  const judges = parseJudges(values.judge);
+  const variant = values.variant === undefined ? undefined : await loadVariant(path.resolve(context.io.cwd, values.variant));
+  const roleConfig = evalRoleConfig(provider, variant);
+  const models = roleModels(roleConfig);
   const suite = await loadEvalSuite(path.resolve(context.io.cwd, suiteArg));
   const tasks = selectTasks(suite, values.task);
-  const estimate = estimateSuite(provider, tasks, repeat, maxCostUsd, (role, roles) => catalogModel(roles[role].model).pricing ?? []);
+  const estimate = estimateSuite(provider, tasks, repeat, maxCostUsd, (model) => catalogModel(model).pricing ?? [], { models, judges });
   const jsonl = values.json ? new JsonlWriter(context.io.stdout, context.redactor) : undefined;
   if (values.estimate) {
     if (jsonl === undefined) {
@@ -134,6 +234,8 @@ export async function evalCommand(context: CommandContext, args: readonly string
   if (maxCostUsd === undefined) {
     throw usageError(`--max-cost is required to run an eval; ${EVAL_USAGE}`);
   }
+  const resolve = createModelResolver(context.io.env, context.overrides);
+  const judgeTargets = judges.map((ref): JudgeTarget => ({ label: modelLabel(ref), ...resolve(ref) }));
   if (jsonl === undefined) {
     printEstimate(context.err, estimate);
   }
@@ -146,7 +248,9 @@ export async function evalCommand(context: CommandContext, args: readonly string
         suite,
         task,
         attempt,
-        provider,
+        roles: roleConfig,
+        extraRoots: variant?.extraRoots ?? [],
+        judges: judgeTargets,
         maxCostUsd,
         maxWallMinutes,
         io: context.io,
@@ -162,13 +266,14 @@ export async function evalCommand(context: CommandContext, args: readonly string
     }
   }
   const summary = summarize(records);
-  const roles = providerRoles(provider);
   const report = {
     version: 1,
     startedAt: startedAt.toISOString(),
     finishedAt: context.io.now().toISOString(),
     provider,
-    roles: Object.fromEntries(TEAM_ROLES.map((role) => [role, `${roles[role].model.provider}:${roles[role].model.id}`])),
+    ...(variant === undefined ? {} : { variant: { name: variant.name, file: variant.file, sha256: variant.sha256 } }),
+    roles: Object.fromEntries(TEAM_ROLES.map((role) => [role, modelLabel(models[role])])),
+    judges: judgeTargets.map((judge) => judge.label),
     suite: suite.dir,
     tasks: tasks.map((task) => task.id),
     repeat,
@@ -178,7 +283,7 @@ export async function evalCommand(context: CommandContext, args: readonly string
     summary,
     records,
   };
-  const outFile = values.out === undefined ? defaultOutFile(suite.dir, provider, startedAt) : path.resolve(context.io.cwd, values.out);
+  const outFile = values.out === undefined ? defaultOutFile(suite.dir, provider, variant, startedAt) : path.resolve(context.io.cwd, values.out);
   await mkdir(path.dirname(outFile), { recursive: true });
   await writeFile(outFile, `${JSON.stringify(context.redactor.redactValue(report), null, 2)}\n`);
   if (jsonl === undefined) {

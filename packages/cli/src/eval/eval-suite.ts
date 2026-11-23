@@ -17,6 +17,7 @@ export const EvalTaskSchema = z.strictObject({
   fixture: z.string().regex(SLUG),
   task: z.string().min(1),
   accept: z.array(z.string().trim().min(1).max(MAX_CRITERION_LENGTH)).max(MAX_ACCEPTANCE_CRITERIA).default([]),
+  rubric: z.array(z.string().trim().min(1).max(MAX_CRITERION_LENGTH)).max(MAX_ACCEPTANCE_CRITERIA).default([]),
   expect: z.enum(["approved", "not-approved"]),
   check: z.string().regex(/^[a-z0-9][a-z0-9-]*\.js$/u).optional(),
   turns: z.strictObject({ lead: turnCount, researcher: turnCount, executor: turnCount, reviewer: turnCount }).optional(),

@@ -32,7 +32,9 @@ Usage:
   bma doctor [--json]
   bma trust [--revoke]
   bma eval <suite-dir> --provider claude|grok (--estimate | --max-cost <usd>) [--task <id>]...
-           [--repeat <n>] [--max-wall-minutes <n>] [--out <file>] [--keep] [--json]
+           [--variant <file>] [--judge <provider>[:<model>]]... [--repeat <n>] [--max-wall-minutes <n>]
+           [--out <file>] [--keep] [--json]
+  bma eval compare <a.json> <b.json> [--json]
   bma --version | --help
 
 Environment:

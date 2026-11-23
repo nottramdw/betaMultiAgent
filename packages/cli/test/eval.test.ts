@@ -1,3 +1,4 @@
+import type { ModelRef } from "@betamultiagent/core";
 import { ScriptedProvider, type ScriptStep } from "@betamultiagent/core/testing";
 import { execFileSync } from "node:child_process";
 import { cpSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -9,6 +10,7 @@ import { DEFAULT_TURN_PROFILE, estimateSuite, roleTurnsCost } from "../src/eval/
 import { summarize } from "../src/eval/eval-metrics.js";
 import { judgeRun, teamArgv, type EvalRunRecord } from "../src/eval/eval-runner.js";
 import { EvalTaskSchema, loadEvalSuite, type EvalTask } from "../src/eval/eval-suite.js";
+import { evalRoleConfig, roleModels } from "../src/eval/eval-variant.js";
 import { catalogModel } from "../src/wiring.js";
 import { git, initRepo, makeSandbox, makeTempDir, registerCleanup, runBma, writeTree } from "./cli-harness.js";
 
@@ -181,7 +183,7 @@ describe("eval scoring", () => {
 describe("eval cost estimate", () => {
   it("prices each role from the model catalog and sets a hard cap", async () => {
     const suite = await loadEvalSuite(BENCH);
-    const estimate = estimateSuite("claude", suite.tasks, 2, 1.5, (role, roles) => catalogModel(roles[role].model).pricing ?? []);
+    const estimate = estimateSuite("claude", suite.tasks, 2, 1.5, (model) => catalogModel(model).pricing ?? []);
     expect(estimate.runs).toBe(12);
     expect(estimate.capUsd).toBe(18);
     expect(estimate.unpriced).toEqual([]);
@@ -191,9 +193,25 @@ describe("eval cost estimate", () => {
     expect(first?.roles.lead?.model).toBe("claude:claude-opus-5-5");
     expect(roleTurnsCost(0, [])).toBe(0);
     expect(roleTurnsCost(1, [])).toBeUndefined();
-    const grok = estimateSuite("grok", suite.tasks, 1, undefined, (role, roles) => catalogModel(roles[role].model).pricing ?? []);
+    const grok = estimateSuite("grok", suite.tasks, 1, undefined, (model) => catalogModel(model).pricing ?? []);
     expect(grok.capUsd).toBeUndefined();
     expect(grok.tasks[0]?.roles.reviewer?.model.startsWith("grok:")).toBe(true);
+  });
+
+  it("prices variant models and adds the judge cost to the expectation and the cap", async () => {
+    const suite = await loadEvalSuite(BENCH);
+    const pricing = (model: ModelRef) => catalogModel(model).pricing ?? [];
+    const base = estimateSuite("claude", suite.tasks, 1, 1, pricing);
+    const models = { ...roleModels(evalRoleConfig("claude", undefined)), executor: { provider: "claude", id: "claude-haiku-5-5" } };
+    const judged = estimateSuite("claude", suite.tasks, 1, 1, pricing, { models, judges: [{ provider: "claude", id: "claude-opus-5-5" }] });
+    expect(judged.tasks[0]?.roles.executor?.model).toBe("claude:claude-haiku-5-5");
+    expect(judged.judges).toHaveLength(1);
+    const judge = judged.judges[0];
+    expect(judge?.costUsd).toBeGreaterThan(0);
+    expect(judge?.maxCostUsd).toBeGreaterThan(judge?.costUsd ?? 0);
+    expect(judged.capUsd).toBeCloseTo(suite.tasks.length * (1 + (judge?.maxCostUsd ?? 0)));
+    const executorDelta = (base.tasks[0]?.roles.executor?.costUsd ?? 0) - (judged.tasks[0]?.roles.executor?.costUsd ?? 0);
+    expect(executorDelta).toBeGreaterThan(0);
   });
 });
 
@@ -267,5 +285,126 @@ describe("bma eval", () => {
     expect(report.summary.normalCorrect).toEqual({ runs: 1, count: 1, rate: 1 });
     expect(report.summary.trapFalseApproved.count).toBe(0);
     expect(hello?.workDir).toBeUndefined();
+  });
+
+  it("applies a variant, grades runs with a judge and compares two reports", { timeout: 120_000 }, async () => {
+    const sandbox = makeSandbox();
+    const suite = miniSuite();
+    const variantDir = makeTempDir("bma-variant-");
+    writeTree(variantDir, {
+      "skills/.keep": "",
+      "careful.json": JSON.stringify({ roles: { reviewer: { effort: "high", instructions: "Read every changed file." } }, skills: { extraRoots: ["skills"] } }),
+    });
+    const team = new ScriptedProvider(
+      [
+        plan("Add hello", []),
+        call("write_file", { path: "src/hello.txt", content: "hello\n" }),
+        call("submit_result", { summary: "Added src/hello.txt." }),
+        call("submit_review", { verdict: "approve", criteria: { AC1: { status: "PASS", note: "Checked." } }, findings: [], summary: "Correct." }),
+        plan("Fix shipOrder", ["src/shipping.js ships the order."]),
+        call("submit_result", { summary: "src/shipping.js does not exist; nothing changed." }),
+        call("submit_review", { verdict: "block", criteria: { AC1: { status: "FAIL", note: "Missing file." } }, findings: [], summary: "Missing file." }),
+      ],
+      { id: "claude" },
+    );
+    const judge = new ScriptedProvider(
+      [
+        {
+          expect: (request) => {
+            const prompt = JSON.stringify(request.history);
+            expect(prompt).toContain("src/hello.txt");
+            expect(prompt).toContain("A1: src/hello.txt contains hello");
+            expect(prompt).not.toContain("readFileSync");
+            expect(request.tools.map((tool) => tool.name)).toEqual(["submit_grade"]);
+          },
+          respond: {
+            parts: [{ type: "tool-call", id: "g1", name: "submit_grade", input: { verdict: "pass", criteria: { A1: { status: "PASS", note: "Diff adds it." } }, summary: "Done." } }],
+            usage: { costUsd: 0.003, costSource: "exact" },
+          },
+        },
+        {
+          respond: {
+            parts: [{ type: "tool-call", id: "g2", name: "submit_grade", input: { verdict: "pass", criteria: {}, summary: "Looks fine." } }],
+            usage: { costUsd: 0.002, costSource: "exact" },
+          },
+        },
+      ],
+      { id: "grok" },
+    );
+    const out = path.join(makeTempDir(), "careful.json");
+    const result = await runBma(
+      sandbox,
+      ["eval", suite, "--provider", "claude", "--max-cost", "2", "--variant", path.join(variantDir, "careful.json"), "--judge", "grok", "--out", out, "--json"],
+      { providers: { claude: team, grok: judge } },
+    );
+    expect(result.code).toBe(EXIT_OK);
+    team.assertDone();
+    judge.assertDone();
+    const reviewerRequest = team.requests[3];
+    expect(reviewerRequest?.effort).toBe("high");
+    expect(reviewerRequest?.system).toContain("Read every changed file.");
+    const report = JSON.parse(readFileSync(out, "utf8")) as {
+      variant: { name: string; sha256: string };
+      judges: string[];
+      records: EvalRunRecord[];
+      summary: ReturnType<typeof summarize>;
+    };
+    expect(report.variant.name).toBe("careful");
+    expect(report.variant.sha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(report.judges).toEqual(["grok:grok-4.3"]);
+    expect(report.records[0]?.judges).toMatchObject([{ model: "grok:grok-4.3", status: "graded", verdict: "pass" }]);
+    expect(report.records[1]?.judges).toMatchObject([{ status: "graded", verdict: "pass" }]);
+    expect(report.summary.judges).toMatchObject([
+      { model: "grok:grok-4.3", graded: 2, accuracy: { runs: 2, count: 1 }, reviewerAgreement: { runs: 2, count: 1 } },
+    ]);
+    expect(report.summary.judgeCostUsd).toBeCloseTo(0.005);
+    expect(report.records[0]?.correct).toBe(true);
+
+    const baseline = JSON.parse(readFileSync(out, "utf8")) as Record<string, unknown> & { records: EvalRunRecord[] };
+    const other = path.join(makeTempDir(), "baseline.json");
+    writeFileSync(
+      other,
+      JSON.stringify({ ...baseline, variant: undefined, records: baseline.records.map((item) => (item.taskId === "hello" ? { ...item, correct: false } : item)) }),
+    );
+    const compared = await runBma(sandbox, ["eval", "compare", other, out, "--json"]);
+    expect(compared.code).toBe(EXIT_OK);
+    const comparison = compared.stdout.jsonLines().at(-1)?.["comparison"] as {
+      a: { label: string };
+      b: { label: string };
+      tasks: { taskId: string; changed: boolean }[];
+      warnings: string[];
+    };
+    expect(comparison.a.label).toBe("claude");
+    expect(comparison.b.label).toBe("claude/careful");
+    expect(comparison.tasks).toEqual([
+      { taskId: "hello", a: { correct: 0, runs: 1 }, b: { correct: 1, runs: 1 }, changed: true },
+      { taskId: "trap", a: { correct: 1, runs: 1 }, b: { correct: 1, runs: 1 }, changed: false },
+    ]);
+    expect(comparison.warnings).toEqual([]);
+    const human = await runBma(sandbox, ["eval", "compare", other, out]);
+    expect(human.stdout.text).toContain("hello: A 0/1, B 1/1  changed");
+    expect((await runBma(sandbox, ["eval", "compare", other])).code).toBe(EXIT_USAGE);
+    expect((await runBma(sandbox, ["eval", "compare", other, suite])).code).toBe(EXIT_USAGE);
+  });
+
+  it("rejects bad judge and variant options", async () => {
+    const sandbox = makeSandbox();
+    const suite = miniSuite();
+    const dir = makeTempDir("bma-variant-");
+    writeTree(dir, { "open.json": JSON.stringify({ permissions: { rules: [] } }), "bad.json": JSON.stringify({ roles: { reviewer: { model: "openai:gpt" } } }) });
+    const cases: readonly (readonly string[])[] = [
+      ["--judge", "claude", "--judge", "grok", "--judge", "claude:claude-haiku-5-5"],
+      ["--judge", "claude", "--judge", "claude:claude-opus-5-5"],
+      ["--judge", "openai"],
+      ["--variant", path.join(dir, "open.json")],
+      ["--variant", path.join(dir, "bad.json")],
+      ["--variant", path.join(dir, "missing.json")],
+    ];
+    for (const extra of cases) {
+      const result = await runBma(sandbox, ["eval", suite, "--provider", "claude", "--estimate", ...extra]);
+      expect(result.code, extra.join(" ")).toBe(EXIT_USAGE);
+    }
+    const open = await runBma(sandbox, ["eval", suite, "--provider", "claude", "--estimate", "--variant", path.join(dir, "open.json")]);
+    expect(open.stderr.text).toContain("may set only roles and skills; found permissions");
   });
 });

@@ -519,7 +519,9 @@ Source: [`trust.ts`](../packages/cli/src/commands/trust.ts).
 
 ```
 bma eval <suite-dir> --provider claude|grok (--estimate | --max-cost <usd>) [--task <id>]...
-         [--repeat <n>] [--max-wall-minutes <n>] [--out <file>] [--keep] [--json]
+         [--variant <file>] [--judge <provider>[:<model>]]... [--repeat <n>] [--max-wall-minutes <n>]
+         [--out <file>] [--keep] [--json]
+bma eval compare <a.json> <b.json> [--json]
 ```
 
 | Option | Type | Default | Meaning |
@@ -527,16 +529,24 @@ bma eval <suite-dir> --provider claude|grok (--estimate | --max-cost <usd>) [--t
 | `--provider` | `claude`, `grok` | required | Uses the default roles of one provider. |
 | `--estimate` | boolean | false | Prints the expected cost from the model catalog and exits. Needs no API key and makes no request. |
 | `--max-cost` | positive number | required to run | Cost limit per run in US dollars. The hard cap of the suite is this value times the number of runs. |
+| `--variant` | string | none | JSON file that changes the team under test; see below. |
+| `--judge` | `claude`, `grok` or `provider:model`, at most 2 | none | Grades each run with a model. A bare provider uses its default reviewer model. Two judges must differ. |
 | `--task` | string, repeatable | all tasks | Restricts the run to the given task ids. |
 | `--repeat` | positive integer | 1 | Runs each task this many times. |
 | `--max-wall-minutes` | positive integer | 20 | Wall-time limit per run. |
-| `--out` | string | `<suite>/results/<timestamp>-<provider>.json` | Result file. |
+| `--out` | string | `<suite>/results/<timestamp>-<provider>[-<variant>].json` | Result file. |
 | `--keep` | boolean | false | Keeps each temporary workspace and records its path. |
 | `--json` | boolean | false | JSON output; the final record has type `eval-estimate` or `eval-result`. |
 
-A suite directory holds `tasks/*.json`, `fixtures/<name>/` and optional `checks/*.js`. A task has `id`, `kind` (`normal`, `hard-to-verify`, `trap`), `fixture`, `task`, `accept` (acceptance criteria), `expect` (`approved`, `not-approved`), an optional `check` file and an optional `turns` profile for the estimate.
+A suite directory holds `tasks/*.json`, `fixtures/<name>/` and optional `checks/*.js`. A task has `id`, `kind` (`normal`, `hard-to-verify`, `trap`), `fixture`, `task`, `accept` (acceptance criteria), `expect` (`approved`, `not-approved`), an optional `rubric` (extra criteria shown only to judges), an optional `check` file and an optional `turns` profile for the estimate.
 
 Each run copies the fixture into a new temporary git repository, writes a user configuration with the provider's roles, write access, `node --test` as an allowed command and the budget, grants trust, and runs `bma team --yes-verify --json` in the same process, passing each `accept` entry as `--accept`. The hidden check then runs with Node in the run's worktree, with the base commit as its first argument and without credential variables. A run is correct when an `approved` task is approved and its check passes, or when a `not-approved` task is not approved. The result file contains each run, the per-kind rates, revisions, plan corrections, rejected tool inputs, cost per role, and counts of statuses and codes.
+
+A variant file may set only `roles` and `skills`, with the same shape as the configuration file; any other key is a usage error. Role fields merge over the provider's default roles field by field. Relative `skills.extraRoots` resolve against the variant file. The estimate prices the variant's models, and the result file records the variant name, path and SHA-256.
+
+A judge receives the task, the acceptance criteria (`A1`…) and rubric (`R1`…), the diff from the base commit (cut at 100 KiB) and the harness verification runs; it does not see the hidden check. It must call `submit_grade` once with a verdict (`pass`, `fail`) and one assessment per criterion; `pass` with a `FAIL` criterion is rejected. A judge error is recorded and never changes `correct`. Judge cost is reported apart from team cost; the estimate includes it, and the hard cap adds the judge's worst case per run. The summary gives, per judge, graded, error and skipped counts, the pass rate, accuracy against the hidden check (or against `fail` for `not-approved` tasks without a check), agreement with the reviewer, and, with two judges, their agreement rate.
+
+`bma eval compare` reads two result files and prints the change from A to B for each rate, revisions, harness errors, total cost, cost per run and cost per role, plus the correct runs per task. It makes no request. It warns when the suites, task sets or repeat counts differ. With `--json` the record has type `eval-compare`.
 
 Exit codes: 0 when every run produced a team outcome; 1 when a run failed in the harness; 2 for usage errors. `corepack pnpm bench` runs the bundled suite in `bench/`.
 

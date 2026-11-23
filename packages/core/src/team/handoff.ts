@@ -35,7 +35,7 @@ function bulletList(items: readonly string[]): string {
   return items.map((item) => `- ${item}`).join("\n");
 }
 
-function fenced(text: string, language = ""): string {
+export function fenced(text: string, language = ""): string {
   const longest = Math.max(2, ...[...text.matchAll(/`+/gu)].map((match) => match[0].length));
   const fence = "`".repeat(longest + 1);
   return `${fence}${language}\n${text}\n${fence}`;
