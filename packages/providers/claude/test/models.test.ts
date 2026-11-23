@@ -39,9 +39,15 @@ describe("claude catalog", () => {
     expect(selectPriceTier(tiers, 100_001)?.inputPerMTok).toBe(0.5);
   });
 
+  it("prices haiku cache reads at a tenth of the input price", () => {
+    const tiers = parseModelRef({ id: "claude-haiku-5-5" }).pricing ?? [];
+    expect(selectPriceTier(tiers, 100_000)?.cacheReadPerMTok).toBe(0.01);
+    expect(selectPriceTier(tiers, 100_001)?.cacheReadPerMTok).toBe(0.05);
+  });
+
   it("stamps the pricing date", () => {
     for (const entry of models) {
-      expect(entry.pricingAsOf).toBe("2026-11-20");
+      expect(entry.pricingAsOf).toBe("2026-11-23");
     }
   });
 });

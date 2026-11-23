@@ -39,7 +39,7 @@ export const models: readonly ModelInfo[] = [
     tier(LONG_CONTEXT_THRESHOLD - 1, 2, 6, 0.5),
     tier(null, 4, 12, 1),
   ),
-  model("grok-4.3", 1_000_000, [], tier(LONG_CONTEXT_THRESHOLD - 1, 1.25, 2.5, 0.2), tier(null, 2.5, 5, 0.4)),
+  model("grok-4.3", 1_000_000, ["low", "medium", "high", "xhigh"], tier(LONG_CONTEXT_THRESHOLD - 1, 1.25, 2.5, 0.2), tier(null, 2.5, 5, 0.4)),
 ];
 
 export function findModel(id: string): ModelInfo | undefined {

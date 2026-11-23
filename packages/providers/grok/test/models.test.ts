@@ -26,7 +26,14 @@ describe("grok catalog", () => {
 
   it("accepts a supported effort and rejects an unsupported one", () => {
     expect(parseModelRef({ id: "grok-4.7", effort: "high" }).id).toBe("grok-4.7");
-    expect(() => parseModelRef({ id: "grok-4.3", effort: "high" })).toThrow(ProviderError);
+    expect(() => parseModelRef({ id: "grok-4.7", effort: "max" })).toThrow(ProviderError);
+  });
+
+  it("accepts low through xhigh effort for grok-4.3", () => {
+    for (const effort of ["low", "medium", "high", "xhigh"] as const) {
+      expect(parseModelRef({ id: "grok-4.3", effort }).id).toBe("grok-4.3");
+    }
+    expect(() => parseModelRef({ id: "grok-4.3", effort: "max" })).toThrow(ProviderError);
   });
 
   it("switches price tier above the long context threshold", () => {

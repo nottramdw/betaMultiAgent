@@ -2,7 +2,7 @@ import { ProviderError, type Effort, type ModelInfo, type ModelRef, type PriceTi
 
 const EFFORT_LEVELS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 
-export const PRICING_AS_OF = "2026-11-20";
+export const PRICING_AS_OF = "2026-11-23";
 
 function tier(
   maxPromptTokens: number | null,
@@ -29,7 +29,7 @@ function model(id: string, pricing: PriceTier[]): ModelInfo {
 export const models: readonly ModelInfo[] = [
   model("claude-opus-5-5", [tier(null, 4, 20, 0.2, 5)]),
   model("claude-sonnet-5-5", [tier(null, 2, 10, 0.1, 2.5)]),
-  model("claude-haiku-5-5", [tier(100_000, 0.1, 0.5, 0.005, 0.125), tier(null, 0.5, 2.5, 0.025, 0.625)]),
+  model("claude-haiku-5-5", [tier(100_000, 0.1, 0.5, 0.01, 0.125), tier(null, 0.5, 2.5, 0.05, 0.625)]),
   model("claude-fable-5-2", [tier(null, 8, 40, 0.2, 10)]),
 ];
 

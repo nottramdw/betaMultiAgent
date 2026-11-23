@@ -81,7 +81,7 @@ describe("grok request mapping", () => {
 
   it("rejects an unsupported effort and an oversized output budget", async () => {
     const provider = createGrokProvider({ apiKey: "k", maxRetries: 0 });
-    await expect(collect(provider.stream(baseRequest({ model: "grok-4.3", effort: "high" }), idle))).rejects.toMatchObject({
+    await expect(collect(provider.stream(baseRequest({ model: "grok-4.3", effort: "max" }), idle))).rejects.toMatchObject({
       kind: "invalid-request",
     });
     await expect(collect(provider.stream(baseRequest({ maxOutputTokens: 1_000_000 }), idle))).rejects.toMatchObject({
