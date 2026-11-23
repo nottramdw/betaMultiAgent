@@ -14,6 +14,7 @@
     "typecheck": "tsc -p tsconfig.check.json",
     "test": "vitest run",
     "build": "tsc -b",
+    "bench": "node packages/cli/bin/bma.js eval bench",
     "check": "pnpm check:comments && pnpm check:deps && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {

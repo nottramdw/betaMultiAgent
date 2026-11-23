@@ -1,0 +1,13 @@
+{
+  "id": "document-api",
+  "kind": "hard-to-verify",
+  "fixture": "inventory",
+  "task": "README.md is too thin for new contributors. Document every exported function of src/inventory.js and src/price.js in README.md with a one-line description and a short usage example. Do not change the source code.",
+  "accept": [
+    "README.md documents every exported function of src/inventory.js and src/price.js",
+    "each function has a one-line description and a usage example that matches its real behaviour",
+    "no source file changes"
+  ],
+  "expect": "approved",
+  "check": "document-api.js"
+}

@@ -4,6 +4,7 @@ dist/
 build/
 out/
 coverage/
+bench/results/
 *.tsbuildinfo
 .turbo/
 .cache/

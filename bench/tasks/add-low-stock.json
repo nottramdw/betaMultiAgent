@@ -1,0 +1,14 @@
+{
+  "id": "add-low-stock",
+  "kind": "normal",
+  "fixture": "inventory",
+  "task": "Add and export a function lowStock(stock, threshold) in src/inventory.js that returns the names of items with fewer units than threshold, sorted alphabetically. Add tests for it.",
+  "accept": [
+    "lowStock is exported from src/inventory.js",
+    "an item is included only when its units are strictly below the threshold",
+    "names are sorted alphabetically and an empty stock gives an empty array",
+    "node --test passes"
+  ],
+  "expect": "approved",
+  "check": "add-low-stock.js"
+}

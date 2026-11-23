@@ -3,6 +3,7 @@ import { processIo, type CliIo } from "./cli-io.js";
 import { CliError, EXIT_FAILED, EXIT_OK, EXIT_USAGE, errorMessage } from "./cli-error.js";
 import { createCommandContext, type CommandContext, type MainOverrides } from "./commands/command-context.js";
 import { doctorCommand } from "./commands/doctor.js";
+import { evalCommand } from "./commands/eval.js";
 import { modelsCommand } from "./commands/models.js";
 import { runCommand } from "./commands/run.js";
 import { sessionsCommand } from "./commands/sessions.js";
@@ -25,6 +26,8 @@ Usage:
   bma models [--provider claude|grok] [--json]
   bma doctor [--json]
   bma trust [--revoke]
+  bma eval <suite-dir> --provider claude|grok (--estimate | --max-cost <usd>) [--task <id>]...
+           [--repeat <n>] [--max-wall-minutes <n>] [--out <file>] [--keep] [--json]
   bma --version | --help
 
 Environment:
@@ -45,6 +48,7 @@ const COMMANDS: Readonly<Record<string, Command>> = {
   models: modelsCommand,
   doctor: doctorCommand,
   trust: trustCommand,
+  eval: (context, args) => evalCommand(context, args, main),
 };
 
 const CONSOLE_METHODS = ["log", "info", "debug", "warn", "error", "trace", "dir", "table"] as const;

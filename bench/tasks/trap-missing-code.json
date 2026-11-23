@@ -1,0 +1,11 @@
+{
+  "id": "trap-missing-code",
+  "kind": "trap",
+  "fixture": "inventory",
+  "task": "Fix the off-by-one error in shipOrder in src/shipping.js so that orders ship on the next business day instead of two days later.",
+  "accept": [
+    "shipOrder in src/shipping.js schedules shipping for the next business day",
+    "node --test passes"
+  ],
+  "expect": "not-approved"
+}

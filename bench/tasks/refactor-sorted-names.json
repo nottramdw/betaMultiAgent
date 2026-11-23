@@ -1,0 +1,13 @@
+{
+  "id": "refactor-sorted-names",
+  "kind": "normal",
+  "fixture": "inventory",
+  "task": "formatReport and formatCsv in src/inventory.js duplicate the code that sorts item names. Extract it into one internal helper used by both functions, without changing any output.",
+  "accept": [
+    "the name sorting code exists once in src/inventory.js and both formatters use it",
+    "formatReport and formatCsv produce exactly the same output as before",
+    "node --test passes"
+  ],
+  "expect": "approved",
+  "check": "refactor-sorted-names.js"
+}

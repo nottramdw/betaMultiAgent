@@ -1,0 +1,14 @@
+{
+  "id": "fix-overdraw",
+  "kind": "normal",
+  "fixture": "inventory",
+  "task": "removeItem in src/inventory.js lets a stock go negative when more units are removed than are available. Make it throw a RangeError in that case, including for items that are not in the stock, and add tests for the new behaviour.",
+  "accept": [
+    "removeItem throws a RangeError when the quantity exceeds the units available, including for unknown items",
+    "removing exactly the available units leaves the item at zero units or removes it",
+    "removeItem still does not mutate its input",
+    "node --test passes"
+  ],
+  "expect": "approved",
+  "check": "fix-overdraw.js"
+}

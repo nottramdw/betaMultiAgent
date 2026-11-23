@@ -54,7 +54,7 @@ export function providerAvailability(env: CliIo["env"], overrides: WiringOverrid
   };
 }
 
-function catalogModel(ref: ModelRef): ModelInfo {
+export function catalogModel(ref: ModelRef): ModelInfo {
   if (ref.provider !== "claude" && ref.provider !== "grok") {
     throw usageError(`unknown provider ${JSON.stringify(ref.provider)}; expected claude or grok`);
   }

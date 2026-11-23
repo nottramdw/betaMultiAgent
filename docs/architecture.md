@@ -306,6 +306,7 @@ Entry: [`packages/cli/bin/bma.js`](../packages/cli/bin/bma.js) imports `runCli` 
 | `bma models` | Prints the catalog of both providers. `--provider claude\|grok`, `--json`. |
 | `bma doctor` | Checks Node, platform, git, keys, hosts, state directory mode, workspace, trust, config, instructions, skills, long paths on Windows, and sandbox status. Exits 1 when an error-level check fails. |
 | `bma trust` | Lists workspace trust records and asks for confirmation. `--revoke` removes trust. Trust is bound to the SHA-256 of `bma.config.json`. |
+| `bma eval <suite-dir>` | Benchmark of the team. Each task runs in a fresh temporary repository and `BMA_HOME`, through `main` in the same process, so tests can inject a scripted provider. A hidden check grades the worktree. `--estimate` prices the suite from the catalog without keys. |
 
 ### Directories
 

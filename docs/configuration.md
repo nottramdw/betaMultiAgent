@@ -432,6 +432,33 @@ Declining the prompt exits 0 and leaves the workspace untrusted. Trust is bound 
 
 Source: [`trust.ts`](../packages/cli/src/commands/trust.ts).
 
+### `bma eval`
+
+```
+bma eval <suite-dir> --provider claude|grok (--estimate | --max-cost <usd>) [--task <id>]...
+         [--repeat <n>] [--max-wall-minutes <n>] [--out <file>] [--keep] [--json]
+```
+
+| Option | Type | Default | Meaning |
+|--------|------|---------|---------|
+| `--provider` | `claude`, `grok` | required | Uses the default roles of one provider. |
+| `--estimate` | boolean | false | Prints the expected cost from the model catalog and exits. Needs no API key and makes no request. |
+| `--max-cost` | positive number | required to run | Cost limit per run in US dollars. The hard cap of the suite is this value times the number of runs. |
+| `--task` | string, repeatable | all tasks | Restricts the run to the given task ids. |
+| `--repeat` | positive integer | 1 | Runs each task this many times. |
+| `--max-wall-minutes` | positive integer | 20 | Wall-time limit per run. |
+| `--out` | string | `<suite>/results/<timestamp>-<provider>.json` | Result file. |
+| `--keep` | boolean | false | Keeps each temporary workspace and records its path. |
+| `--json` | boolean | false | JSON output; the final record has type `eval-estimate` or `eval-result`. |
+
+A suite directory holds `tasks/*.json`, `fixtures/<name>/` and optional `checks/*.js`. A task has `id`, `kind` (`normal`, `hard-to-verify`, `trap`), `fixture`, `task`, `accept` (acceptance criteria), `expect` (`approved`, `not-approved`), an optional `check` file and an optional `turns` profile for the estimate.
+
+Each run copies the fixture into a new temporary git repository, writes a user configuration with the provider's roles, write access, `node --test` as an allowed command and the budget, grants trust, and runs `bma team --yes-verify --json` in the same process. The hidden check then runs with Node in the run's worktree, with the base commit as its first argument and without credential variables. A run is correct when an `approved` task is approved and its check passes, or when a `not-approved` task is not approved. The result file contains each run, the per-kind rates, revisions, plan corrections, rejected tool inputs, cost per role, and counts of statuses and codes.
+
+Exit codes: 0 when every run produced a team outcome; 1 when a run failed in the harness; 2 for usage errors. `corepack pnpm bench` runs the bundled suite in `bench/`.
+
+Source: [`eval.ts`](../packages/cli/src/commands/eval.ts), [`eval/`](../packages/cli/src/eval).
+
 ## Model selection
 
 ### Reference format
