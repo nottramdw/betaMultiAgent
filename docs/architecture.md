@@ -131,9 +131,9 @@ Invalid tool-call JSON is flagged in both streams (`inputError: "invalid-json"` 
 | Claude | `claude-haiku-5-5` | 1,000,000 | 128,000 (default 64,000) | Researcher role by default; 100k prompt-token pricing tier |
 | Claude | `claude-fable-5-2` | 1,000,000 | 128,000 (default 64,000) | |
 | Grok | `grok-4.7` | 500,000 | default 32,000 | Effort levels `low`, `medium`, `high`, `xhigh`; long-context pricing tier at 200k |
-| Grok | `grok-4.3` | 1,000,000 | default 32,000 | No effort levels |
+| Grok | `grok-4.3` | 1,000,000 | default 32,000 | Effort levels `low`, `medium`, `high`, `xhigh`; long-context pricing tier at 200k |
 
-The Claude catalog has no aliases; model IDs must match exactly. Both catalogs carry pricing dated `PRICING_AS_OF = "2026-11-20"`. Claude costs are `estimated` from the catalog. Grok uses `cost_usd` when present and marks it `exact`.
+The Claude catalog has no aliases; model IDs must match exactly. Each catalog dates its pricing with `PRICING_AS_OF`: `2026-11-23` for Claude, `2026-11-20` for Grok. Claude costs are `estimated` from the catalog. Grok uses `cost_usd` when present and marks it `exact`.
 
 Reasoning effort is `EffortSchema`: `low`, `medium`, `high`, `xhigh`, `max`.
 

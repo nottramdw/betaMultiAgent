@@ -163,7 +163,7 @@ Complete file with every key. `skills` is effective only in the user file; in a 
 
 Notes:
 
-- `effort` values must be supported by the chosen model. `grok:grok-4.3` has no effort levels.
+- `effort` values must be supported by the chosen model. Grok models accept `low` to `xhigh`; `max` is Claude only.
 - On Windows, an absolute `extraRoots` entry uses a drive path such as `"C:\\team-skills"`. Relative entries are skipped with a warning.
 - A `team.setup` entry is an argv array. It is not passed through a shell.
 
@@ -430,9 +430,37 @@ Source: [`claude/models.ts`](../packages/providers/claude/src/models.ts), [`grok
 | `claude:claude-haiku-5-5` | 1,000,000 | 128,000 | low, medium, high, xhigh, max |
 | `claude:claude-fable-5-2` | 1,000,000 | 128,000 | low, medium, high, xhigh, max |
 | `grok:grok-4.7` | 500,000 | 128,000 | low, medium, high, xhigh |
-| `grok:grok-4.3` | 1,000,000 | 128,000 | none |
+| `grok:grok-4.3` | 1,000,000 | 128,000 | low, medium, high, xhigh |
 
-Effort is set only through `roles.<role>.effort`. No default effort is applied.
+Effort is set only through `roles.<role>.effort`. When it is not set, `bma` sends no effort and the provider applies its own default.
+
+### Effort per role
+
+Provider defaults when no effort is sent, per the provider documentation as of 2026-11-23:
+
+| Model | Provider default |
+|-------|------------------|
+| `claude:claude-opus-5-5` | medium |
+| `claude:claude-sonnet-5-5` | high |
+| `claude:claude-fable-5-2` | high |
+| `claude:claude-haiku-5-5` | not documented |
+| `grok:grok-4.7` | high |
+| `grok:grok-4.3` | low |
+
+The default roles therefore run the Opus lead and reviewer at `medium`, and a `grok-4.3` researcher or reviewer at `low`. To raise them, set `effort` per role:
+
+```json
+{
+  "roles": {
+    "lead": { "model": "claude:claude-opus-5-5", "effort": "high" },
+    "executor": { "model": "claude:claude-sonnet-5-5", "effort": "high" },
+    "reviewer": { "model": "grok:grok-4.7", "effort": "high" },
+    "researcher": { "model": "grok:grok-4.3", "effort": "medium" }
+  }
+}
+```
+
+Higher effort raises output and reasoning tokens, and therefore cost. The cost difference has not been measured.
 
 ### Default models per role
 
