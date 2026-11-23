@@ -441,7 +441,7 @@ Source: [`team-clean.ts`](../packages/cli/src/commands/team-clean.ts).
 ```
 bma task add <goal> [--goal-file <file>] [--title <text>] [--accept <criterion>]... [--after <id>]... [--parent <id>] [--ask] [--json]
 bma task [list [--status <status>] | show <id> | cancel <id>] [--json]
-bma task run [<id> | --all [--parallel <n>]] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--json]
+bma task run [<id> | --all [--parallel <n>]] [--allow-dirty] [--max-cost <usd>] [--yes-verify | --unattended] [--json]
 ```
 
 A task records a goal for a later run. Tasks are stored per workspace in `<state>/projects/<key>/tasks/tasks.jsonl`; each line is a redacted event (`added` or `status`), and the current state is derived from the events in order. Malformed lines are skipped with a warning. Task ids are ULIDs; commands accept the full id or a unique prefix of at least 4 characters.
@@ -482,10 +482,62 @@ Statuses: `open`, `running`, `done`, `failed`, `needs-human`, `cancelled`. A tas
 | Team `needs-human` or `blocked`; ask `refused` | `needs-human` |
 | Team `failed` or `budget-exceeded`; ask failed, loop detected, budget exceeded or output token limit | `failed` |
 | `aborted` | `open` |
+| Team `approved` with verification not `passed`, under `--unattended` | `needs-human` (code `unverified`, exit 4) |
 
 Exit codes: 0 when every run is `done` or no task is ready; otherwise the exit code of the first run that did not end `done` (as for `bma team` or `bma run`). Usage errors exit 2.
 
-Source: [`task.ts`](../packages/cli/src/commands/task.ts), [`task-store.ts`](../packages/cli/src/tasks/task-store.ts), [`runner-lock.ts`](../packages/cli/src/tasks/runner-lock.ts).
+#### Unattended runs
+
+`--unattended` is for runs started by a scheduler, with nobody at the terminal.
+
+- It cannot be combined with `--yes-verify` (exit 2), and it requires `budget.dailyMaxCostUsd` in the user configuration (exit 2 otherwise).
+- No prompt is shown, even on a terminal. Agent tool calls with an `ask` decision are denied.
+- Setup and verification commands run only when an `exec` rule with decision `allow` in the **user** configuration lists the exact argv, with no trailing `*`. Prefix rules, project rules and `--yes-verify` do not approve a command; hard-deny and `deny` rules still apply. The list of exact rules is the fixed verification list of every scheduled run.
+- A team run that the reviewer approves but whose verification did not pass (a command failed, or was skipped because it is not listed) sets the task to `needs-human` with code `unverified` and exits 4.
+
+`bma` has no scheduler. A trigger calls `bma task run --unattended --json` (optionally with `--all`) in the workspace, with the API keys in the environment of the scheduled job. Exit code 3 means the daily cap refused the run, and the task stays `open`.
+
+User configuration for a workspace whose verification is `pnpm test`:
+
+```json
+{
+  "budget": { "dailyMaxCostUsd": 5, "maxCostUsd": 1 },
+  "permissions": { "rules": [{ "kind": "exec", "match": ["pnpm", "test"], "decision": "allow" }] }
+}
+```
+
+cron (Linux, macOS), every day at 02:00:
+
+```
+0 2 * * * cd /work/repo && bma task run --all --unattended --json >> ~/bma-task.log 2>&1
+```
+
+Windows Task Scheduler:
+
+```powershell
+$action = New-ScheduledTaskAction -Execute "bma.cmd" -Argument "task run --all --unattended --json" -WorkingDirectory "D:\work\repo"
+Register-ScheduledTask -TaskName "bma-tasks" -Action $action -Trigger (New-ScheduledTaskTrigger -Daily -At 2am)
+```
+
+GitHub Actions (the runner needs `bma`, a trusted workspace and the user configuration under `BMA_HOME`):
+
+```yaml
+on:
+  schedule:
+    - cron: "0 2 * * *"
+jobs:
+  tasks:
+    runs-on: self-hosted
+    steps:
+      - run: bma task run --all --unattended --json
+        working-directory: /work/repo
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+Task state, the runner lock and the spend ledger live under `BMA_HOME`, so the trigger must run as the same user with the same `BMA_HOME` on every run. A hosted runner starts from an empty `BMA_HOME` each time and therefore loses the task store and the daily ledger; use a self-hosted runner.
+
+Source: [`task.ts`](../packages/cli/src/commands/task.ts), [`task-store.ts`](../packages/cli/src/tasks/task-store.ts), [`runner-lock.ts`](../packages/cli/src/tasks/runner-lock.ts), [`unattended-policy.ts`](../packages/cli/src/unattended/unattended-policy.ts).
 
 ### `bma sessions`
 

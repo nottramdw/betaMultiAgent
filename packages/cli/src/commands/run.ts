@@ -156,6 +156,7 @@ export interface RunExecution {
   readonly model?: string;
   readonly json: boolean;
   readonly taskId?: string;
+  readonly unattended?: boolean;
 }
 
 export interface RunResult {
@@ -176,7 +177,7 @@ export async function executeRun(context: CommandContext, workspace: Workspace, 
   const writable = role === "executor";
   const tools = createTools(environment, skills).filter((tool) => writable || tool.capabilities.readOnly);
   const name = role;
-  const opened: OpenedChannel | undefined = isInteractive(context, execution.json) ? openPromptChannel(context) : undefined;
+  const opened: OpenedChannel | undefined = execution.unattended !== true && isInteractive(context, execution.json) ? openPromptChannel(context) : undefined;
   const permissions = createPermissionEngine(workspace, environment, skills, opened === undefined ? undefined : createTtyApprover(opened.channel, name));
   const roleConfig = workspace.config.roles[role];
   const maxWallMs = wallMs(workspace.config.budget);

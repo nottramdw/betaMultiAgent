@@ -1,9 +1,10 @@
-import { TEAM_ROLES, type AgentRole, type Rule } from "@betamultiagent/core";
+import { TEAM_ROLES, type AgentRole, type ExecRule, type Rule } from "@betamultiagent/core";
 import { DEFAULT_AUDIT_RETENTION_DAYS, type BudgetConfig, type ConfigFile, type RoleConfigInput } from "./schema.js";
 
 export interface EffectiveConfig {
   readonly trusted: boolean;
   readonly rules: readonly Rule[];
+  readonly userExecRules: readonly ExecRule[];
   readonly roles: Partial<Record<AgentRole, RoleConfigInput>>;
   readonly budget: BudgetConfig;
   readonly passthrough: readonly string[];
@@ -78,6 +79,7 @@ export function mergeConfig(user: ConfigFile, project: ConfigFile, trusted: bool
   return {
     trusted,
     rules,
+    userExecRules: (user.permissions?.rules ?? []).filter((rule): rule is ExecRule => rule.kind === "exec"),
     roles: mergeRoles(user.roles, trusted ? project.roles : undefined),
     budget: mergeBudget(user.budget, trusted ? project.budget : undefined),
     passthrough: [...new Set([...(user.env?.passthrough ?? []), ...(trusted ? (project.env?.passthrough ?? []) : [])])],

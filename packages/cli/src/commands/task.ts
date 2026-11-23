@@ -1,7 +1,7 @@
 import { acceptanceProblems, ulid, type TeamStatus, type TurnOutcome } from "@betamultiagent/core";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { CliError, EXIT_BUDGET, EXIT_FAILED, EXIT_OK, errorMessage, usageError } from "../cli-error.js";
+import { CliError, EXIT_BUDGET, EXIT_FAILED, EXIT_OK, EXIT_STOPPED, errorMessage, usageError } from "../cli-error.js";
 import { tasksDir } from "../config/paths.js";
 import { readPromptFile } from "../input/prompt-file.js";
 import { JsonlWriter } from "../output/jsonl.js";
@@ -314,6 +314,7 @@ interface TaskRunOptions {
   readonly maxCost?: number;
   readonly yesVerify: boolean;
   readonly json: boolean;
+  readonly unattended: boolean;
   readonly quiet?: boolean;
   readonly signal?: AbortSignal;
 }
@@ -354,18 +355,28 @@ async function executeTask(context: CommandContext, workspace: Workspace, store:
         yesVerify: options.yesVerify,
         json: options.json,
         taskId: task.id,
+        unattended: options.unattended,
         ...(options.quiet === undefined ? {} : { quiet: options.quiet }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
-      result = {
-        status: TEAM_STATUS[outcome.status],
-        exitCode: teamExitCode(outcome.status),
-        runId: outcome.runId,
-        ...(outcome.code === undefined ? {} : { code: outcome.code }),
-        ...(outcome.message === undefined ? {} : { message: outcome.message }),
-      };
+      const unverified = options.unattended && outcome.status === "approved" && outcome.verification !== "passed";
+      result = unverified
+        ? {
+            status: "needs-human",
+            exitCode: EXIT_STOPPED,
+            runId: outcome.runId,
+            code: "unverified",
+            message: `verification ${outcome.verification} in an unattended run`,
+          }
+        : {
+            status: TEAM_STATUS[outcome.status],
+            exitCode: teamExitCode(outcome.status),
+            runId: outcome.runId,
+            ...(outcome.code === undefined ? {} : { code: outcome.code }),
+            ...(outcome.message === undefined ? {} : { message: outcome.message }),
+          };
     } else {
-      const run = await executeRun(context, workspace, { input: task.goal, role: "researcher", json: options.json, taskId: task.id });
+      const run = await executeRun(context, workspace, { input: task.goal, role: "researcher", json: options.json, taskId: task.id, unattended: options.unattended });
       result = {
         status: runStatus(run.outcome),
         exitCode: runExitCode(run.outcome),
@@ -488,12 +499,16 @@ async function runTasks(context: CommandContext, args: readonly string[]): Promi
       "max-cost": { type: "string" },
       "yes-verify": { type: "boolean", default: false },
       parallel: { type: "string" },
+      unattended: { type: "boolean", default: false },
       json: { type: "boolean", default: false },
     },
   });
   const [reference, ...extra] = positionals;
   if (extra.length > 0) {
-    throw usageError("usage: bma task run [<id>] [--all [--parallel <n>]]");
+    throw usageError("usage: bma task run [<id>] [--all [--parallel <n>]] [--unattended]");
+  }
+  if (values.unattended && values["yes-verify"]) {
+    throw usageError("--unattended cannot be combined with --yes-verify");
   }
   if (reference !== undefined && values.all) {
     throw usageError("give either a task id or --all, not both");
@@ -505,11 +520,15 @@ async function runTasks(context: CommandContext, args: readonly string[]): Promi
   const maxCost = parseCost(values["max-cost"]);
   const { workspace, store } = await openStore(context);
   reportWorkspace(context, workspace);
+  if (values.unattended && workspace.config.budget.dailyMaxCostUsd === undefined) {
+    throw usageError("--unattended needs budget.dailyMaxCostUsd in the user configuration");
+  }
   const options: TaskRunOptions = {
     allowDirty: values["allow-dirty"],
     ...(maxCost === undefined ? {} : { maxCost }),
     yesVerify: values["yes-verify"],
     json: values.json,
+    unattended: values.unattended,
   };
   const lock = await lockRunner(context, store);
   let summary: RunSummary;

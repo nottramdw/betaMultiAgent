@@ -18,6 +18,7 @@ import { createTtyApprover, createTtyCommandApprover } from "../approver/tty-app
 import { openAudit } from "../audit/open-audit.js";
 import type { DailySpend } from "../budget/daily-spend.js";
 import { openDailySpend, reserveRunBudget, trackSpend } from "../budget/run-budget.js";
+import { unattendedCommandPolicy } from "../unattended/unattended-policy.js";
 import { CommandApprovalTracker } from "../audit/audit-recorder.js";
 import { EXIT_BUDGET, EXIT_FAILED, EXIT_INTERRUPTED, EXIT_OK, EXIT_STOPPED, usageError } from "../cli-error.js";
 import { runsDir, samePath, sessionsDir, worktreesDir } from "../config/paths.js";
@@ -342,6 +343,7 @@ export interface TeamExecution {
   readonly json: boolean;
   readonly taskId?: string;
   readonly quiet?: boolean;
+  readonly unattended?: boolean;
   readonly signal?: AbortSignal;
 }
 
@@ -368,13 +370,14 @@ export async function executeTeam(context: CommandContext, workspace: Workspace,
     envPassthrough: workspace.config.passthrough,
   };
   const quiet = input.quiet === true;
-  const opened: OpenedChannel | undefined = !quiet && isInteractive(context, input.json) ? openPromptChannel(context) : undefined;
+  const unattended = input.unattended === true;
+  const opened: OpenedChannel | undefined = !quiet && !unattended && isInteractive(context, input.json) ? openPromptChannel(context) : undefined;
   let approveCommands: CommandApprover | undefined;
   let tracker: CommandApprovalTracker | undefined;
-  if (workspace.trusted && input.yesVerify) {
+  if (!unattended && workspace.trusted && input.yesVerify) {
     tracker = new CommandApprovalTracker("yes-verify");
     approveCommands = tracker.wrap(() => Promise.resolve(true));
-  } else if (workspace.trusted && opened !== undefined) {
+  } else if (!unattended && workspace.trusted && opened !== undefined) {
     tracker = new CommandApprovalTracker("tty");
     approveCommands = tracker.wrap(createTtyCommandApprover(opened.channel));
   }
@@ -383,6 +386,8 @@ export async function executeTeam(context: CommandContext, workspace: Workspace,
   const listeners: EventListener[] = quiet ? [] : [human ?? jsonl].filter((entry) => entry !== undefined);
   const store = await SessionStore.open({ dir: runDir, redactor: context.redactor });
   const mainEnvironment = createEnvironment(workspace, skills, workspace.root, "local");
+  const basePolicy = createPermissionEngine(workspace, mainEnvironment, skills, undefined);
+  const commandPolicy = unattended ? unattendedCommandPolicy(basePolicy, workspace.config.userExecRules, context.io.platform) : basePolicy;
   const maxWallMs = wallMs(workspace.config.budget);
   const runBudget = await reserveRunBudget(context, workspace, lowest(workspace.config.budget.maxCostUsd, input.maxCost));
   const maxCostUsd = runBudget.maxCostUsd;
@@ -419,7 +424,7 @@ export async function executeTeam(context: CommandContext, workspace: Workspace,
       toolsFor: (_role, environment) => createTools(environment, skills),
       permissionsFor: (role, environment) =>
         createPermissionEngine(workspace, environment, skills, opened === undefined ? undefined : createTtyApprover(opened.channel, role)),
-      commandPolicy: createPermissionEngine(workspace, mainEnvironment, skills, undefined),
+      commandPolicy,
       ...(approveCommands === undefined ? {} : { approveCommands }),
       setup: workspace.config.setup.map((argv) => ({ argv: [...argv] })),
       budget: {

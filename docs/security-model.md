@@ -232,6 +232,8 @@ While a workspace is untrusted ([merge.ts](../packages/cli/src/config/merge.ts))
 
 `bma team --yes-verify` auto-approves verification commands with an `ask` decision, but only when the workspace is trusted.
 
+`bma task run --unattended` shows no prompt and approves a setup or verification command only when a user-configuration `exec` allow rule lists its exact argv ([unattended-policy.ts](../packages/cli/src/unattended/unattended-policy.ts)). A repository's own rules and the plan written by the lead cannot widen this list, prefix rules do not count, and the mode refuses to start without a daily cost cap. An approved result whose verification did not pass is left for a human (`needs-human`), not marked done.
+
 ## Project context, skills, and plugins
 
 ### Project context

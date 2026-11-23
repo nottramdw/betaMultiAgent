@@ -13,7 +13,7 @@ export * from "./ids/ulid.js";
 export * from "./messages/messages.js";
 export * from "./permissions/permission-types.js";
 export { PermissionEngine, type PermissionEngineOptions } from "./permissions/permission-engine.js";
-export { EXACT_ONLY_PROGRAMS, programName } from "./permissions/exec-policy.js";
+export { EXACT_ONLY_PROGRAMS, execRuleMatches, programName } from "./permissions/exec-policy.js";
 export { SECRET_PATTERNS, SENSITIVE_WRITE_PATTERNS } from "./permissions/path-patterns.js";
 export * from "./provider/provider.js";
 export * from "./redaction/redaction.js";

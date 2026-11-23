@@ -284,6 +284,7 @@ Entry: [`packages/cli/bin/bma.js`](../packages/cli/bin/bma.js) imports `runCli` 
 | [approver/tty-approver.ts](../packages/cli/src/approver/tty-approver.ts) | Interactive permission and command prompts |
 | `tasks/*.ts` | Task store (event log folded into task state) and the exclusive runner lock |
 | `budget/*.ts` | Daily cost cap: per-UTC-day spend ledger under a lock file, reservations that set the run cost limit, and the session-log tap that records spend |
+| `unattended/*.ts` | Command policy of unattended task runs: only exact user exec allow rules approve setup and verification commands |
 | [judge/model-judge.ts](../packages/cli/src/judge/model-judge.ts) | Opt-in model judge: fenced prompt from goal, criteria, diff and verification; strict grade schema; used by `bma eval --judge` and the team panel |
 | [panel/team-panel.ts](../packages/cli/src/panel/team-panel.ts) | Panel grading and the conservative selection rule for `bma team --candidates` |
 | `audit/*.ts` | Audit ledger: monthly JSONL files, retention, reader, and the session-log tap that records permissions and per-role cost |

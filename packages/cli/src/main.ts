@@ -27,7 +27,7 @@ Usage:
   bma task add <goal> [--goal-file <file>] [--title <text>] [--accept <criterion>]... [--after <id>]...
            [--parent <id>] [--ask] [--json]
   bma task [list [--status <status>] | show <id> | cancel <id>] [--json]
-  bma task run [<id> | --all [--parallel <n>]] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--json]
+  bma task run [<id> | --all [--parallel <n>]] [--allow-dirty] [--max-cost <usd>] [--yes-verify | --unattended] [--json]
   bma sessions [list | show <id> | rm <id> | prune [--older-than <days>]] [--json]
   bma models [--provider claude|grok] [--json]
   bma doctor [--json]
