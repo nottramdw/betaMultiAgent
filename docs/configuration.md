@@ -33,7 +33,7 @@ Sources are combined in [`mergeConfig`](../packages/cli/src/config/merge.ts). Th
 
 | Key | User file | Project file, trusted | Project file, not trusted |
 |-----|-----------|-----------------------|---------------------------|
-| `roles` | applied | overrides user per role (whole role object replaced, no field-level merge) | ignored |
+| `roles` | applied | merged per field: a project `model` replaces the user `model` and `effort` together; `instructions` and `maxTurns` from the project replace the user values; `maxCostUsd` is the lower of the two | ignored |
 | `permissions.rules` | applied | appended after user rules | only `deny` and `ask` rules are kept |
 | `budget` | applied | per field, the lower value wins | ignored |
 | `env.passthrough` | applied | union with user list | ignored |
@@ -74,10 +74,11 @@ Source: [`schema.ts`](../packages/cli/src/config/schema.ts). Every object is str
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `roles` | object | built-in per role | Per-role overrides. Keys: `lead`, `executor`, `reviewer`, `researcher`. All optional. |
-| `roles.<role>.model` | string | required in the role object | Model reference `<provider>:<model-id>`, provider `claude` or `grok`. See [Model selection](#model-selection). |
+| `roles.<role>.model` | string | built-in model for the role | Model reference `<provider>:<model-id>`, provider `claude` or `grok`. See [Model selection](#model-selection). |
 | `roles.<role>.effort` | `low` \| `medium` \| `high` \| `xhigh` \| `max` | not set | Reasoning effort. The model must support it (checked at runtime). |
 | `roles.<role>.instructions` | non-empty string | none | Appended to the built-in role instructions, which keep the completion-tool protocol. |
 | `roles.<role>.maxTurns` | positive integer | `lead` 40, `researcher` 30, `executor` 120, `reviewer` 40 | Maximum model turns for the role. |
+| `roles.<role>.maxCostUsd` | positive number | not set | Cost cap for the role in a team run. The researcher cap covers all delegations together. Reaching it stops the run with `budget-exceeded` (`budget-role`). |
 | `permissions` | object | none | Permission policy. Only `rules` is accepted. |
 | `permissions.rules` | array | `[]` | Rules, evaluated as described below. |
 | `permissions.rules[].kind` | `read` \| `write` \| `exec` | required | Operation the rule applies to. |
@@ -344,7 +345,7 @@ Exit codes: 0 completed; 1 failed, loop detected, or output token limit reached;
 ### `bma team`
 
 ```
-bma team <task> [--task-file <file>] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--json]
+bma team <task> [--task-file <file>] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--accept <criterion>]... [--json]
 ```
 
 | Option | Short | Type | Default | Meaning |
@@ -353,7 +354,10 @@ bma team <task> [--task-file <file>] [--allow-dirty] [--max-cost <usd>] [--yes-v
 | `--allow-dirty` | | boolean | false | Allow starting when the repository has uncommitted changes. Without it, the run stops with status `failed`. |
 | `--max-cost` | | positive number | none | Cost limit in US dollars. The lower of this and `budget.maxCostUsd` applies. |
 | `--yes-verify` | | boolean | false | Approve verification and setup commands without prompting. Effective only in a trusted workspace. Commands denied by policy still do not run. |
+| `--accept` | | string, repeatable | none | Acceptance criterion, kept verbatim. At most 10, each non-empty and at most 500 characters. The lead may add criteria but cannot change these. |
 | `--json` | | boolean | false | JSON output; the final record has type `team-outcome`. |
+
+The summary lists each criterion with the reviewer assessment (`PASS`, `FAIL`, `NOT_RUN`), the verification status from the harness, and any stop condition or unfinished work reported by the executor. Reviewer and executor statements are claims; only the verification status is produced by the harness.
 
 A team run uses the roles `lead` (plans), `researcher`, `executor` (implements the plan), and `reviewer`. Team changes are made in a git worktree under `<state dir>/worktrees/<runId>`. Verification commands from the plan run only when approved, either interactively or with `--yes-verify`.
 
@@ -453,7 +457,7 @@ bma eval <suite-dir> --provider claude|grok (--estimate | --max-cost <usd>) [--t
 
 A suite directory holds `tasks/*.json`, `fixtures/<name>/` and optional `checks/*.js`. A task has `id`, `kind` (`normal`, `hard-to-verify`, `trap`), `fixture`, `task`, `accept` (acceptance criteria), `expect` (`approved`, `not-approved`), an optional `check` file and an optional `turns` profile for the estimate.
 
-Each run copies the fixture into a new temporary git repository, writes a user configuration with the provider's roles, write access, `node --test` as an allowed command and the budget, grants trust, and runs `bma team --yes-verify --json` in the same process. The hidden check then runs with Node in the run's worktree, with the base commit as its first argument and without credential variables. A run is correct when an `approved` task is approved and its check passes, or when a `not-approved` task is not approved. The result file contains each run, the per-kind rates, revisions, plan corrections, rejected tool inputs, cost per role, and counts of statuses and codes.
+Each run copies the fixture into a new temporary git repository, writes a user configuration with the provider's roles, write access, `node --test` as an allowed command and the budget, grants trust, and runs `bma team --yes-verify --json` in the same process, passing each `accept` entry as `--accept`. The hidden check then runs with Node in the run's worktree, with the base commit as its first argument and without credential variables. A run is correct when an `approved` task is approved and its check passes, or when a `not-approved` task is not approved. The result file contains each run, the per-kind rates, revisions, plan corrections, rejected tool inputs, cost per role, and counts of statuses and codes.
 
 Exit codes: 0 when every run produced a team outcome; 1 when a run failed in the harness; 2 for usage errors. `corepack pnpm bench` runs the bundled suite in `bench/`.
 
@@ -521,7 +525,7 @@ Used when no `roles` entry overrides the role. Source: [`defaultTeamRoles`](../p
 | `executor` | `claude:claude-sonnet-5-5` | `grok:grok-4.7` | `claude:claude-sonnet-5-5` |
 | `reviewer` | `claude:claude-opus-5-5` | `grok:grok-4.3` | `grok:grok-4.7` |
 
-When no key is set, there are no defaults. Every role then needs a `roles.<role>.model` entry, or the command fails with exit 2 (`no API key is configured`).
+A role entry without `model` keeps the default model and applies its other fields, including `effort`, to it. When no key is set, there are no defaults. Every role then needs a `roles.<role>.model` entry, or the command fails with exit 2 (`no API key is configured`).
 
 `bma run` without `--role` uses the `executor` default.
 

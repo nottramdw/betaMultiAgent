@@ -142,6 +142,28 @@ describe("mergeConfig", () => {
     expect(merged.setup).toEqual([["pnpm", "install"]]);
   });
 
+  it("merges role settings field by field, keeping the lower cost cap and treating model and effort as a unit", () => {
+    const userRoles = parseConfigText(
+      "config.json",
+      JSON.stringify({ roles: { executor: { model: "claude:claude-sonnet-5-5", effort: "low", maxCostUsd: 1, instructions: "Be brief." } } }),
+    );
+    const projectRoles = parseConfigText("bma.config.json", JSON.stringify({ roles: { executor: { model: "grok:grok-4.7", maxCostUsd: 3, maxTurns: 9 } } }));
+    expect(mergeConfig(userRoles, projectRoles, true).roles.executor).toEqual({
+      model: "grok:grok-4.7",
+      instructions: "Be brief.",
+      maxTurns: 9,
+      maxCostUsd: 1,
+    });
+    const capOnly = parseConfigText("bma.config.json", JSON.stringify({ roles: { executor: { maxCostUsd: 0.5 } } }));
+    expect(mergeConfig(userRoles, capOnly, true).roles.executor).toEqual({
+      model: "claude:claude-sonnet-5-5",
+      effort: "low",
+      instructions: "Be brief.",
+      maxCostUsd: 0.5,
+    });
+    expect(() => parseConfigText("config.json", JSON.stringify({ roles: { executor: { maxCostUsd: 0 } } }))).toThrow();
+  });
+
   it("reads audit retention only from the user configuration", () => {
     expect(mergeConfig(user, project, true).auditRetentionDays).toBe(180);
     const userAudit = parseConfigText("config.json", JSON.stringify({ audit: { retentionDays: 365 } }));

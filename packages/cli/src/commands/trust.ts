@@ -30,7 +30,18 @@ async function describeActivation(workspace: Workspace): Promise<string[]> {
   lines.push(`  team.setup commands: ${displayValue(project.team?.setup ?? [], 2000)}`);
   lines.push(`  env.passthrough: ${displayValue(project.env?.passthrough ?? [], 1000)}`);
   lines.push(`  budget: ${displayValue(project.budget ?? {}, 500)}`);
-  lines.push(`  roles: ${displayValue(project.roles ?? {}, 2000)}`);
+  const roles = Object.entries(project.roles ?? {});
+  lines.push(`  roles: ${roles.length === 0 ? "none" : ""}`.trimEnd());
+  for (const [role, config] of roles) {
+    const parts = [
+      `model ${config.model === undefined ? "unchanged" : displayValue(config.model, 100)}`,
+      ...(config.effort === undefined ? [] : [`effort ${config.effort}`]),
+      ...(config.maxCostUsd === undefined ? [] : [`maxCostUsd ${String(config.maxCostUsd)} (the lower of user and project applies)`]),
+      ...(config.maxTurns === undefined ? [] : [`maxTurns ${String(config.maxTurns)}`]),
+      ...(config.instructions === undefined ? [] : [`instructions ${String(config.instructions.length)} chars`]),
+    ];
+    lines.push(`    ${role}: ${parts.join(", ")}`);
+  }
   const instructions = await presentFiles(workspace.root, PROJECT_CONTEXT_FILES);
   lines.push(`  instruction files: ${instructions.length === 0 ? "none" : instructions.join(", ")}`);
   const skills = await discoverSkills({ root: workspace.root, userConfigDir: workspace.dirs.config, trusted: true });

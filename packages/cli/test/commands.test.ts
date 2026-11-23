@@ -122,6 +122,15 @@ describe("bma run", () => {
     expect(system).toContain("Cite line numbers.");
   });
 
+  it("keeps the default model when a role setting names only an effort", async () => {
+    const sandbox = makeSandbox();
+    writeTree(sandbox.bmaHome, { "config/config.json": JSON.stringify({ roles: { researcher: { effort: "low", maxCostUsd: 0.2 } } }) });
+    const provider = claude("Answer.");
+    const result = await runBma(sandbox, ["run", "--role", "researcher", "where?"], { providers: { claude: provider } });
+    expect(result.code).toBe(EXIT_OK);
+    expect(provider.requests[0]).toMatchObject({ model: "claude-haiku-5-5", effort: "low" });
+  });
+
   it("rejects an unknown model and a duplicated prompt", async () => {
     const sandbox = makeSandbox();
     const providers = { claude: claude() };

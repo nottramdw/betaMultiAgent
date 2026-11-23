@@ -1,4 +1,4 @@
-import type { AgentRole, Rule } from "@betamultiagent/core";
+import { TEAM_ROLES, type AgentRole, type Rule } from "@betamultiagent/core";
 import { DEFAULT_AUDIT_RETENTION_DAYS, type BudgetConfig, type ConfigFile, type RoleConfigInput } from "./schema.js";
 
 export interface EffectiveConfig {
@@ -29,6 +29,34 @@ function mergeBudget(user: BudgetConfig | undefined, project: BudgetConfig | und
   };
 }
 
+function mergeRole(user: RoleConfigInput | undefined, project: RoleConfigInput | undefined): RoleConfigInput | undefined {
+  if (user === undefined || project === undefined) {
+    return project ?? user;
+  }
+  const model = project.model === undefined ? { model: user.model, effort: user.effort } : { model: project.model, effort: project.effort };
+  const maxCostUsd = lower(user.maxCostUsd, project.maxCostUsd);
+  const instructions = project.instructions ?? user.instructions;
+  const maxTurns = project.maxTurns ?? user.maxTurns;
+  return {
+    ...(model.model === undefined ? {} : { model: model.model }),
+    ...(model.effort === undefined ? {} : { effort: model.effort }),
+    ...(instructions === undefined ? {} : { instructions }),
+    ...(maxTurns === undefined ? {} : { maxTurns }),
+    ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
+  };
+}
+
+function mergeRoles(user: ConfigFile["roles"], project: ConfigFile["roles"]): Partial<Record<AgentRole, RoleConfigInput>> {
+  const roles: Partial<Record<AgentRole, RoleConfigInput>> = {};
+  for (const role of TEAM_ROLES) {
+    const merged = mergeRole(user?.[role], project?.[role]);
+    if (merged !== undefined) {
+      roles[role] = merged;
+    }
+  }
+  return roles;
+}
+
 export function mergeConfig(user: ConfigFile, project: ConfigFile, trusted: boolean): EffectiveConfig {
   const warnings: string[] = [];
   if (project.skills?.extraRoots !== undefined) {
@@ -45,7 +73,7 @@ export function mergeConfig(user: ConfigFile, project: ConfigFile, trusted: bool
   return {
     trusted,
     rules,
-    roles: { ...user.roles, ...(trusted ? project.roles : {}) },
+    roles: mergeRoles(user.roles, trusted ? project.roles : undefined),
     budget: mergeBudget(user.budget, trusted ? project.budget : undefined),
     passthrough: [...new Set([...(user.env?.passthrough ?? []), ...(trusted ? (project.env?.passthrough ?? []) : [])])],
     extraSkillRoots: user.skills?.extraRoots ?? [],

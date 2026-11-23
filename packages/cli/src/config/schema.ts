@@ -13,10 +13,11 @@ export function parseModelSpec(text: string, effort?: ModelRef["effort"]): Model
 }
 
 const RoleConfigSchema = z.strictObject({
-  model: z.string().regex(MODEL_PATTERN, "expected <provider>:<model-id> with provider claude or grok"),
+  model: z.string().regex(MODEL_PATTERN, "expected <provider>:<model-id> with provider claude or grok").optional(),
   effort: EffortSchema.optional(),
   instructions: z.string().min(1).optional(),
   maxTurns: z.number().int().positive().optional(),
+  maxCostUsd: z.number().positive().optional(),
 });
 export type RoleConfigInput = z.infer<typeof RoleConfigSchema>;
 

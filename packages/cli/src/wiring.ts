@@ -174,10 +174,23 @@ function roleOverride(base: RoleConfig | undefined, input: RoleConfigInput | und
   if (input === undefined) {
     return base;
   }
+  let model: RoleConfig["model"] | undefined;
+  if (input.model !== undefined) {
+    model = parseModelSpec(input.model, input.effort);
+  } else if (base !== undefined) {
+    model = input.effort === undefined ? base.model : { ...base.model, effort: input.effort };
+  }
+  if (model === undefined) {
+    return undefined;
+  }
+  const instructions = input.instructions ?? base?.instructions;
+  const maxTurns = input.maxTurns ?? base?.maxTurns;
+  const maxCostUsd = input.maxCostUsd ?? base?.maxCostUsd;
   return {
-    model: parseModelSpec(input.model, input.effort),
-    ...(input.instructions === undefined ? {} : { instructions: input.instructions }),
-    ...(input.maxTurns === undefined ? {} : { maxTurns: input.maxTurns }),
+    model,
+    ...(instructions === undefined ? {} : { instructions }),
+    ...(maxTurns === undefined ? {} : { maxTurns }),
+    ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
   };
 }
 
