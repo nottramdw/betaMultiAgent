@@ -21,12 +21,13 @@ export const HELP = `bma ${VERSION}: a multi-agent development environment for C
 
 Usage:
   bma run [--prompt <text> | --prompt-file <file> | <text>] [--model provider:id] [--role <role>] [--json]
-  bma team <task> [--task-file <file>] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--json]
+  bma team <task> [--task-file <file>] [--accept <criterion>]... [--allow-dirty] [--max-cost <usd>] [--yes-verify]
+           [--candidates <n> [--judge <provider>[:<model>]]...] [--json]
   bma team clean <runId> | --all [--delete-branch] [--yes]
   bma task add <goal> [--goal-file <file>] [--title <text>] [--accept <criterion>]... [--after <id>]...
            [--parent <id>] [--ask] [--json]
   bma task [list [--status <status>] | show <id> | cancel <id>] [--json]
-  bma task run [<id> | --all] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--json]
+  bma task run [<id> | --all [--parallel <n>]] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--json]
   bma sessions [list | show <id> | rm <id> | prune [--older-than <days>]] [--json]
   bma models [--provider claude|grok] [--json]
   bma doctor [--json]

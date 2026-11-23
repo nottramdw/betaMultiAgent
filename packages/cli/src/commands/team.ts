@@ -20,9 +20,11 @@ import { CommandApprovalTracker } from "../audit/audit-recorder.js";
 import { EXIT_BUDGET, EXIT_FAILED, EXIT_INTERRUPTED, EXIT_OK, EXIT_STOPPED, usageError } from "../cli-error.js";
 import { runsDir, samePath, sessionsDir, worktreesDir } from "../config/paths.js";
 import { readPromptFile } from "../input/prompt-file.js";
+import { parseJudgeSpecs, resolveJudges } from "../judge/model-judge.js";
 import { HumanRenderer, type TerminalWriter } from "../output/human.js";
 import { JsonlWriter } from "../output/jsonl.js";
 import { displayArgv, displayValue } from "../output/sanitize.js";
+import { buildPanel, gradeCandidate, MAX_CANDIDATES, MIN_CANDIDATES, printPanelSummary, type PanelResult } from "../panel/team-panel.js";
 import { installInterruptHandler } from "../process/interrupt.js";
 import {
   createEnvironment,
@@ -178,9 +180,17 @@ export async function teamCommand(context: CommandContext, args: readonly string
       "max-cost": { type: "string" },
       "yes-verify": { type: "boolean", default: false },
       accept: { type: "string", multiple: true },
+      candidates: { type: "string" },
+      judge: { type: "string", multiple: true },
       json: { type: "boolean", default: false },
     },
   });
+  const candidates = parseCandidates(values.candidates);
+  const judgeSpecs = values.judge ?? [];
+  if (judgeSpecs.length > 0 && candidates === undefined) {
+    throw usageError("--judge needs --candidates");
+  }
+  const judgeRefs = parseJudgeSpecs(judgeSpecs);
   const acceptance = values.accept ?? [];
   const invalidAcceptance = acceptanceProblems(acceptance);
   if (invalidAcceptance.length > 0) {
@@ -190,15 +200,108 @@ export async function teamCommand(context: CommandContext, args: readonly string
   const task = await readTask(context, values["task-file"], positionals);
   const workspace = await openWorkspace(context.io, context.redactor);
   reportWorkspace(context, workspace);
-  const outcome = await executeTeam(context, workspace, {
+  const input: TeamExecution = {
     task,
     acceptance,
     allowDirty: values["allow-dirty"],
     ...(maxCost === undefined ? {} : { maxCost }),
     yesVerify: values["yes-verify"],
     json: values.json,
-  });
+  };
+  if (candidates !== undefined) {
+    const judges = resolveJudges(judgeRefs, context.io.env, context.overrides);
+    if (!input.yesVerify) {
+      context.err.line("bma: without --yes-verify the panel skips verification, so no candidate can be selected");
+    }
+    const panel = await runPanel(context, workspace, input, candidates, judges);
+    return panelExitCode(panel);
+  }
+  const outcome = await executeTeam(context, workspace, input);
   return teamExitCode(outcome.status);
+}
+
+function parseCandidates(text: string | undefined): number | undefined {
+  if (text === undefined) {
+    return undefined;
+  }
+  const value = Number(text);
+  if (!Number.isInteger(value) || value < MIN_CANDIDATES || value > MAX_CANDIDATES) {
+    throw usageError(`--candidates must be an integer from ${String(MIN_CANDIDATES)} to ${String(MAX_CANDIDATES)}, got ${JSON.stringify(text)}`);
+  }
+  return value;
+}
+
+function panelExitCode(panel: PanelResult): number {
+  if (panel.selected !== undefined) {
+    return EXIT_OK;
+  }
+  if (panel.candidates.some((candidate) => candidate.status === "approved")) {
+    return EXIT_STOPPED;
+  }
+  const first = panel.candidates[0];
+  return first === undefined ? EXIT_FAILED : teamExitCode(first.status);
+}
+
+async function settleAll<T>(work: readonly Promise<T>[]): Promise<T[]> {
+  const settled = await Promise.allSettled(work);
+  const failure = settled.find((entry) => entry.status === "rejected");
+  if (failure !== undefined) {
+    throw failure.reason;
+  }
+  return settled.map((entry) => (entry as PromiseFulfilledResult<T>).value);
+}
+
+async function runPanel(
+  context: CommandContext,
+  workspace: Workspace,
+  input: TeamExecution,
+  count: number,
+  judges: ReturnType<typeof resolveJudges>,
+): Promise<PanelResult> {
+  const controller = new AbortController();
+  const uninstall = installRunInterrupt(context, controller);
+  try {
+    const outcomes = await settleAll(
+      Array.from({ length: count }, () => executeTeam(context, workspace, { ...input, quiet: true, signal: controller.signal })),
+    );
+    const grading = { goal: input.task, acceptance: input.acceptance, judges, root: workspace.root, env: context.io.env, signal: controller.signal };
+    const grades = await settleAll(outcomes.map((outcome) => gradeCandidate(outcome, grading)));
+    const panel = buildPanel(outcomes, grades);
+    if (input.json) {
+      new JsonlWriter(context.io.stdout, context.redactor).writeResult("team-panel", { panel });
+    } else {
+      printPanelSummary(context.out, panel);
+    }
+    return panel;
+  } finally {
+    uninstall();
+  }
+}
+
+export function installRunInterrupt(context: CommandContext, controller: AbortController): () => void {
+  return installInterruptHandler({
+    signals: context.io.signals,
+    controller,
+    notify: (message) => {
+      context.err.line(message);
+    },
+    exit: context.io.exit,
+    ...(context.overrides.killProcessTrees === undefined ? {} : { killProcessTrees: context.overrides.killProcessTrees }),
+  });
+}
+
+function linkSignal(signal: AbortSignal, controller: AbortController): () => void {
+  const onAbort = (): void => {
+    controller.abort();
+  };
+  if (signal.aborted) {
+    controller.abort();
+    return () => undefined;
+  }
+  signal.addEventListener("abort", onAbort, { once: true });
+  return () => {
+    signal.removeEventListener("abort", onAbort);
+  };
 }
 
 export function reportWorkspace(context: CommandContext, workspace: Workspace): void {
@@ -218,6 +321,8 @@ export interface TeamExecution {
   readonly yesVerify: boolean;
   readonly json: boolean;
   readonly taskId?: string;
+  readonly quiet?: boolean;
+  readonly signal?: AbortSignal;
 }
 
 export async function executeTeam(context: CommandContext, workspace: Workspace, input: TeamExecution): Promise<TeamOutcome> {
@@ -242,7 +347,8 @@ export async function executeTeam(context: CommandContext, workspace: Workspace,
     baseEnv: context.io.env,
     envPassthrough: workspace.config.passthrough,
   };
-  const opened: OpenedChannel | undefined = isInteractive(context, input.json) ? openPromptChannel(context) : undefined;
+  const quiet = input.quiet === true;
+  const opened: OpenedChannel | undefined = !quiet && isInteractive(context, input.json) ? openPromptChannel(context) : undefined;
   let approveCommands: CommandApprover | undefined;
   let tracker: CommandApprovalTracker | undefined;
   if (workspace.trusted && input.yesVerify) {
@@ -254,21 +360,13 @@ export async function executeTeam(context: CommandContext, workspace: Workspace,
   }
   const human = input.json ? undefined : new HumanRenderer({ stdout: context.out, stderr: context.err, streamText: false });
   const jsonl = input.json ? new JsonlWriter(context.io.stdout, context.redactor) : undefined;
-  const listeners: EventListener[] = [human ?? jsonl].filter((entry) => entry !== undefined);
+  const listeners: EventListener[] = quiet ? [] : [human ?? jsonl].filter((entry) => entry !== undefined);
   const store = await SessionStore.open({ dir: runDir, redactor: context.redactor });
   const mainEnvironment = createEnvironment(workspace, skills, workspace.root, "local");
   const maxWallMs = wallMs(workspace.config.budget);
   const maxCostUsd = lowest(workspace.config.budget.maxCostUsd, input.maxCost);
   const controller = new AbortController();
-  const uninstall = installInterruptHandler({
-    signals: context.io.signals,
-    controller,
-    notify: (message) => {
-      context.err.line(message);
-    },
-    exit: context.io.exit,
-    ...(context.overrides.killProcessTrees === undefined ? {} : { killProcessTrees: context.overrides.killProcessTrees }),
-  });
+  const uninstall = input.signal === undefined ? installRunInterrupt(context, controller) : linkSignal(input.signal, controller);
   const catalog = skillCatalog(skills);
   const audit = await openAudit(context, workspace, runId);
   audit.recorder.start({

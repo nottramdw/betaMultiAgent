@@ -374,7 +374,8 @@ Exit codes: 0 completed; 1 failed, loop detected, or output token limit reached;
 ### `bma team`
 
 ```
-bma team <task> [--task-file <file>] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--accept <criterion>]... [--json]
+bma team <task> [--task-file <file>] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--accept <criterion>]...
+         [--candidates <n> [--judge <provider>[:<model>]]...] [--json]
 ```
 
 | Option | Short | Type | Default | Meaning |
@@ -384,7 +385,9 @@ bma team <task> [--task-file <file>] [--allow-dirty] [--max-cost <usd>] [--yes-v
 | `--max-cost` | | positive number | none | Cost limit in US dollars. The lower of this and `budget.maxCostUsd` applies. |
 | `--yes-verify` | | boolean | false | Approve verification and setup commands without prompting. Effective only in a trusted workspace. Commands denied by policy still do not run. |
 | `--accept` | | string, repeatable | none | Acceptance criterion, kept verbatim. At most 10, each non-empty and at most 500 characters. The lead may add criteria but cannot change these. |
-| `--json` | | boolean | false | JSON output; the final record has type `team-outcome`. |
+| `--candidates` | | integer 2 to 4 | none | Run a panel of that many independent team runs of the same task; see below. |
+| `--judge` | | model, repeatable | none | Judge model for the panel, at most 2, all different. A bare provider means its default `reviewer` model. Requires `--candidates`. |
+| `--json` | | boolean | false | JSON output; the final record has type `team-outcome` (with `--candidates`: one per candidate, then `team-panel`). |
 
 The summary lists each criterion with the reviewer assessment (`PASS`, `FAIL`, `NOT_RUN`), the verification status from the harness, and any stop condition or unfinished work reported by the executor. Reviewer and executor statements are claims; only the verification status is produced by the harness.
 
@@ -392,7 +395,14 @@ A team run uses the roles `lead` (plans), `researcher`, `executor` (implements t
 
 Exit codes by status: `approved` 0; `failed` 1; `budget-exceeded` 3; `needs-human` or `blocked` 4; `aborted` 130. Usage errors exit 2.
 
-Source: [`team.ts`](../packages/cli/src/commands/team.ts), [`run-team.ts`](../packages/core/src/team/run-team.ts).
+Panel (`--candidates <n>`):
+
+- The candidates run concurrently with the same configuration. Each has its own run id, worktree and branch `bma/<runId>`, and its own `--max-cost` limit, so the panel may cost up to `n` times that limit plus the judges. No interactive prompts are shown; verification runs only with `--yes-verify`. Ctrl+C stops every candidate.
+- With `--judge`, each judge grades every candidate that produced a commit, from the task, the `--accept` criteria, the diff `base..commit` (at most 100 KiB) and the harness verification results. A judge call has a 5-minute timeout and at most 4,000 output tokens.
+- The harness selects a candidate only when it is `approved` with a commit, harness verification `passed` with at least one command, every reviewer criterion is `PASS`, there are no sensitive changes, and every judge graded it `pass`. Among those, it prefers fewer revisions, then lower cost, then candidate order. Nothing is merged; the summary lists each candidate with the reasons it was not selected.
+- Exit codes: 0 when a candidate is selected; 4 when none is selected but at least one is `approved`; otherwise the exit code of the first candidate's status.
+
+Source: [`team.ts`](../packages/cli/src/commands/team.ts), [`run-team.ts`](../packages/core/src/team/run-team.ts), [`team-panel.ts`](../packages/cli/src/panel/team-panel.ts), [`model-judge.ts`](../packages/cli/src/judge/model-judge.ts).
 
 ### `bma team clean`
 
@@ -416,7 +426,7 @@ Source: [`team-clean.ts`](../packages/cli/src/commands/team-clean.ts).
 ```
 bma task add <goal> [--goal-file <file>] [--title <text>] [--accept <criterion>]... [--after <id>]... [--parent <id>] [--ask] [--json]
 bma task [list [--status <status>] | show <id> | cancel <id>] [--json]
-bma task run [<id> | --all] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--json]
+bma task run [<id> | --all [--parallel <n>]] [--allow-dirty] [--max-cost <usd>] [--yes-verify] [--json]
 ```
 
 A task records a goal for a later run. Tasks are stored per workspace in `<state>/projects/<key>/tasks/tasks.jsonl`; each line is a redacted event (`added` or `status`), and the current state is derived from the events in order. Malformed lines are skipped with a warning. Task ids are ULIDs; commands accept the full id or a unique prefix of at least 4 characters.
@@ -446,6 +456,7 @@ Statuses: `open`, `running`, `done`, `failed`, `needs-human`, `cancelled`. A tas
 
 - Without an id, runs the oldest ready task. With `--all`, keeps running ready tasks in order until none is left, a run is interrupted, or the process stops. With an id, runs that task if it is `open`, `failed` or `needs-human` and its dependencies are `done`.
 - Mode `team` runs `bma team` with the task goal and acceptance criteria; `--allow-dirty`, `--max-cost` and `--yes-verify` have the same meaning. Mode `ask` runs `bma run --role researcher` with the goal.
+- `--parallel <n>` (1 to 4, default 1, requires `--all`) runs up to `n` ready `team` tasks at once, each in its own worktree and branch. When a run ends, tasks that became ready are started. An `ask` task runs alone, once no other run is active. Team runs in parallel mode show no prompts and no event stream: verification runs only with `--yes-verify`, and each run prints its summary (or `team-outcome` record) when it ends. `--max-cost` applies to each run, so concurrent spending can reach `n` times that limit. Ctrl+C stops every run; after an interrupted run, no new task is started. Dependencies only order the runs: a dependent task starts from the current `HEAD`, not from the unmerged branch of its dependency.
 - Each run's `run-start` audit record carries `taskId`. The task history records the run id (team run id or session id).
 - Only one runner per workspace: `tasks/runner.lock` is created exclusively and holds `pid`, `hostname` and `startedAt`. A lock from a process that no longer exists on the same host is replaced with a warning; any other existing lock is an error (exit 1) that names the lock file. After taking the lock, tasks left `running` by a stopped runner are set to `failed` with code `interrupted`.
 - With `--json`, each finished task writes a record of type `task-run` with `taskId`, `status` and `runId`; when no task is ready, one record with `status` `idle`.

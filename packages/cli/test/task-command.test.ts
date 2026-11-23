@@ -1,4 +1,4 @@
-import { ScriptedProvider, type ScriptStep } from "@betamultiagent/core/testing";
+﻿import { ScriptedProvider, type ScriptStep } from "@betamultiagent/core/testing";
 import { appendFileSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +7,7 @@ import { readAuditLedger } from "../src/audit/audit-ledger.js";
 import { EXIT_FAILED, EXIT_OK, EXIT_USAGE } from "../src/cli-error.js";
 import { projectKey } from "../src/config/paths.js";
 import { git, initRepo, makeSandbox, registerCleanup, runBma, writeTree, type Sandbox } from "./cli-harness.js";
+import { hasTool, mentions, RoutedProvider, type Route } from "./routed-provider.js";
 
 registerCleanup();
 
@@ -49,6 +50,38 @@ async function listTasks(sandbox: Sandbox): Promise<TaskLine[]> {
   const result = await runBma(sandbox, ["task", "list", "--json"]);
   expect(result.code).toBe(EXIT_OK);
   return result.stdout.jsonLines().at(-1)?.["tasks"] as TaskLine[];
+}
+
+function teamRoutes(name: string, task: string, file: string): Route[] {
+  const planTitle = `${name} plan`;
+  return [
+    {
+      name: `${name}-lead`,
+      match: (request) => hasTool(request, "submit_plan") && mentions(request, task),
+      script: new ScriptedProvider([
+        call("submit_plan", {
+          title: planTitle,
+          summary: `Create ${file}.`,
+          steps: [{ id: "1", title: "Write the file", detail: `${file} exists.` }],
+          inScope: ["src/**"],
+          outOfScope: [],
+          verify: [{ argv: ["node", "-e", `require('fs').accessSync('${file}')`] }],
+          stopConditions: [],
+          acceptance: [`${file} exists`],
+        }),
+      ]),
+    },
+    {
+      name: `${name}-executor`,
+      match: (request) => hasTool(request, "submit_result") && mentions(request, planTitle),
+      script: new ScriptedProvider([call("write_file", { path: file, content: `${name}\n` }), call("submit_result", { summary: `Added ${file}.` })]),
+    },
+    {
+      name: `${name}-reviewer`,
+      match: (request) => hasTool(request, "submit_review") && mentions(request, planTitle),
+      script: new ScriptedProvider([call("submit_review", { verdict: "approve", criteria: { AC1: { status: "PASS", note: "Read it." } }, findings: [], summary: "Right." })]),
+    },
+  ];
 }
 
 function prepareRepo(sandbox: Sandbox): void {
@@ -97,6 +130,9 @@ describe("bma task", () => {
       ["task", "list", "--status", "sleeping"],
       ["task", "show"],
       ["task", "run", "01ZZZZZZ", "--all"],
+      ["task", "run", "--parallel", "2"],
+      ["task", "run", "--all", "--parallel", "5"],
+      ["task", "run", "--all", "--parallel", "1.5"],
       ["task", "frobnicate"],
     ];
     for (const argv of cases) {
@@ -158,6 +194,45 @@ describe("bma task", () => {
     expect(result.code).toBe(EXIT_FAILED);
     expect(result.stderr.text).toContain("another task runner is active");
     expect(readFileSync(lockFile, "utf8")).toContain(String(process.pid));
+  });
+
+  it("runs independent team tasks in parallel and an ask task alone once its dependency is done", { timeout: 90_000 }, async () => {
+    const sandbox = makeSandbox();
+    prepareRepo(sandbox);
+    expect((await runBma(sandbox, ["trust"], { stdin: "y\n", stdinIsTTY: true, stderrIsTTY: true })).code).toBe(EXIT_OK);
+    const alpha = await addTask(sandbox, ["Add the alpha file"], 0);
+    const beta = await addTask(sandbox, ["Add the beta file"], 1);
+    const summary = await addTask(sandbox, ["Summarise the alpha work", "--ask", "--after", alpha], 2);
+    const provider = new RoutedProvider(
+      "claude",
+      [
+        ...teamRoutes("alpha", "Add the alpha file", "src/alpha.txt"),
+        ...teamRoutes("beta", "Add the beta file", "src/beta.txt"),
+        {
+          name: "summary",
+          match: (request) => mentions(request, "Summarise the alpha work"),
+          script: new ScriptedProvider([{ respond: { text: "The alpha file was added." } }]),
+        },
+      ],
+      { overlap: ["alpha-lead", "beta-lead"] },
+    );
+    const result = await runBma(sandbox, ["task", "run", "--all", "--parallel", "2", "--yes-verify", "--json"], { providers: { claude: provider } });
+    expect(result.stderr.text).toBe("");
+    expect(result.code).toBe(EXIT_OK);
+    provider.assertDone();
+    const lines = result.stdout.jsonLines();
+    const outcomes = lines.filter((line) => line["type"] === "team-outcome").map((line) => line["outcome"] as { status: string; branch: string });
+    expect(outcomes.map((outcome) => outcome.status)).toEqual(["approved", "approved"]);
+    expect(new Set(outcomes.map((outcome) => outcome.branch)).size).toBe(2);
+    const runs = lines.filter((line) => line["type"] === "task-run").map((line) => [line["taskId"], line["status"]]);
+    expect(runs).toHaveLength(3);
+    expect(runs.at(-1)).toEqual([summary, "done"]);
+    expect(runs.slice(0, 2)).toEqual(expect.arrayContaining([
+      [alpha, "done"],
+      [beta, "done"],
+    ]));
+    expect((await listTasks(sandbox)).map((task) => task.status)).toEqual(["done", "done", "done"]);
+    expect(git(sandbox.workspace, ["status", "--porcelain"], sandbox.env)).toBe("");
   });
 
   it("runs a team task with its acceptance criteria", { timeout: 60_000 }, async () => {

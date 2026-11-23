@@ -10,7 +10,7 @@ import type { MainOverrides } from "../commands/command-context.js";
 import { auditDir, userConfigFile } from "../config/paths.js";
 import { grantTrust } from "../config/trust.js";
 import { CREDENTIAL_VARIABLES, createCliRedactor, ensureStateDir, openWorkspace } from "../wiring.js";
-import { JUDGE_TIMEOUT_MS, MAX_JUDGE_DIFF_BYTES, runJudge, type JudgeRecord, type JudgeTarget } from "./eval-judge.js";
+import { JUDGE_TIMEOUT_MS, runJudge, truncateDiff, type JudgeRecord, type JudgeTarget } from "../judge/model-judge.js";
 import type { EvalSuite, EvalTask } from "./eval-suite.js";
 import type { EvalRoleConfig } from "./eval-variant.js";
 
@@ -153,7 +153,7 @@ async function runCheck(
   }
 }
 
-async function collectDiff(worktree: string, baseCommit: string, env: Record<string, string>): Promise<{ text: string; truncated: boolean }> {
+async function collectDiff(worktree: string, baseCommit: string, env: Record<string, string>): Promise<{ readonly text: string; readonly truncated: boolean }> {
   await git(worktree, env, ["add", "--all"]);
   const result = await execFileAsync("git", ["diff", "--cached", "--no-color", "--no-ext-diff", baseCommit], {
     cwd: worktree,
@@ -161,10 +161,7 @@ async function collectDiff(worktree: string, baseCommit: string, env: Record<str
     windowsHide: true,
     maxBuffer: 64 * 1024 * 1024,
   });
-  const bytes = Buffer.from(result.stdout, "utf8");
-  return bytes.length <= MAX_JUDGE_DIFF_BYTES
-    ? { text: result.stdout, truncated: false }
-    : { text: bytes.subarray(0, MAX_JUDGE_DIFF_BYTES).toString("utf8"), truncated: true };
+  return truncateDiff(result.stdout);
 }
 
 async function gradeRun(options: EvalRunOptions, outcome: TeamOutcome | undefined, env: Record<string, string>): Promise<JudgeRecord[] | undefined> {
@@ -177,7 +174,14 @@ async function gradeRun(options: EvalRunOptions, outcome: TeamOutcome | undefine
   const diff = await collectDiff(outcome.worktreePath, outcome.baseCommit, env);
   const records: JudgeRecord[] = [];
   for (const judge of options.judges) {
-    const input = { task: options.task, diff: diff.text, diffTruncated: diff.truncated, verification: outcome.verificationRuns };
+    const input = {
+      goal: options.task.task,
+      acceptance: options.task.accept,
+      rubric: options.task.rubric,
+      diff: diff.text,
+      diffTruncated: diff.truncated,
+      verification: outcome.verificationRuns,
+    };
     records.push(await runJudge(judge, input, AbortSignal.timeout(JUDGE_TIMEOUT_MS)));
   }
   return records;

@@ -5,7 +5,8 @@ import path from "node:path";
 import { z } from "zod";
 import { usageError } from "../cli-error.js";
 import { ConfigFileSchema, parseModelSpec, type RoleConfigInput } from "../config/schema.js";
-import { modelLabel, providerRoles, type EvalProvider } from "./eval-estimate.js";
+import { modelLabel } from "../judge/model-judge.js";
+import { providerRoles, type EvalProvider } from "./eval-estimate.js";
 
 const VARIANT_KEYS = ["roles", "skills"] as const;
 

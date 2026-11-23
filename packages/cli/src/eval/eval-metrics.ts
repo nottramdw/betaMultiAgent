@@ -1,5 +1,5 @@
 import type { AgentRole } from "@betamultiagent/core";
-import type { JudgeRecord } from "./eval-judge.js";
+import type { JudgeRecord } from "../judge/model-judge.js";
 import type { EvalRunRecord } from "./eval-runner.js";
 
 export interface RateMetric {

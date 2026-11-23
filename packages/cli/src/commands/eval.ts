@@ -1,19 +1,18 @@
-import { TEAM_ROLES, type ModelRef } from "@betamultiagent/core";
+import { TEAM_ROLES } from "@betamultiagent/core";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { EXIT_FAILED, EXIT_OK, usageError } from "../cli-error.js";
-import { parseModelSpec } from "../config/schema.js";
 import { compareReports, loadReport, type EvalComparison, type MetricDelta, type MetricValue } from "../eval/eval-compare.js";
-import { estimateSuite, modelLabel, providerRoles, type EvalProvider, type SuiteEstimate } from "../eval/eval-estimate.js";
-import type { JudgeTarget } from "../eval/eval-judge.js";
+import { estimateSuite, type EvalProvider, type SuiteEstimate } from "../eval/eval-estimate.js";
 import { summarize, type EvalSummary, type RateMetric } from "../eval/eval-metrics.js";
 import { runEvalTask, type EvalRunRecord, type MainEntry } from "../eval/eval-runner.js";
 import { loadEvalSuite, selectTasks } from "../eval/eval-suite.js";
 import { evalRoleConfig, loadVariant, roleModels, type EvalVariant } from "../eval/eval-variant.js";
+import { modelLabel, parseJudgeSpecs, resolveJudges } from "../judge/model-judge.js";
 import type { TerminalWriter } from "../output/human.js";
 import { JsonlWriter } from "../output/jsonl.js";
-import { catalogModel, createModelResolver } from "../wiring.js";
+import { catalogModel } from "../wiring.js";
 import type { CommandContext } from "./command-context.js";
 
 export const EVAL_USAGE =
@@ -22,7 +21,6 @@ export const EVAL_USAGE =
 export const EVAL_COMPARE_USAGE = "usage: bma eval compare <a.json> <b.json> [--json]";
 
 const DEFAULT_WALL_MINUTES = 20;
-const MAX_JUDGES = 2;
 
 function positiveNumber(flag: string, text: string | undefined): number | undefined {
   if (text === undefined) {
@@ -48,18 +46,6 @@ function parseProvider(text: string | undefined): EvalProvider {
     throw usageError(`--provider must be claude or grok; ${EVAL_USAGE}`);
   }
   return text;
-}
-
-function parseJudges(texts: readonly string[]): ModelRef[] {
-  if (texts.length > MAX_JUDGES) {
-    throw usageError(`at most ${String(MAX_JUDGES)} --judge options are allowed`);
-  }
-  const judges = texts.map((text) => (text === "claude" || text === "grok" ? providerRoles(text).reviewer.model : parseModelSpec(text)));
-  const labels = judges.map((judge) => modelLabel(judge));
-  if (new Set(labels).size !== labels.length) {
-    throw usageError(`--judge models must differ, got ${labels.join(", ")}`);
-  }
-  return judges;
 }
 
 function usd(value: number): string {
@@ -215,7 +201,7 @@ export async function evalCommand(context: CommandContext, args: readonly string
   const repeat = positiveInteger("--repeat", values.repeat, 1);
   const maxCostUsd = positiveNumber("--max-cost", values["max-cost"]);
   const maxWallMinutes = positiveInteger("--max-wall-minutes", values["max-wall-minutes"], DEFAULT_WALL_MINUTES);
-  const judges = parseJudges(values.judge);
+  const judges = parseJudgeSpecs(values.judge);
   const variant = values.variant === undefined ? undefined : await loadVariant(path.resolve(context.io.cwd, values.variant));
   const roleConfig = evalRoleConfig(provider, variant);
   const models = roleModels(roleConfig);
@@ -234,8 +220,7 @@ export async function evalCommand(context: CommandContext, args: readonly string
   if (maxCostUsd === undefined) {
     throw usageError(`--max-cost is required to run an eval; ${EVAL_USAGE}`);
   }
-  const resolve = createModelResolver(context.io.env, context.overrides);
-  const judgeTargets = judges.map((ref): JudgeTarget => ({ label: modelLabel(ref), ...resolve(ref) }));
+  const judgeTargets = resolveJudges(judges, context.io.env, context.overrides);
   if (jsonl === undefined) {
     printEstimate(context.err, estimate);
   }

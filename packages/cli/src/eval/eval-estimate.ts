@@ -1,4 +1,5 @@
 import { defaultTeamRoles, estimateCostUsd, TEAM_ROLES, type AgentRole, type ModelRef, type PriceTier, type TeamRoles } from "@betamultiagent/core";
+import { modelLabel } from "../judge/model-judge.js";
 import { taskTurns, type EvalTask } from "./eval-suite.js";
 
 export type EvalProvider = "claude" | "grok";
@@ -56,10 +57,6 @@ export type PricingLookup = (model: ModelRef) => readonly PriceTier[];
 export interface EstimateOptions {
   readonly models?: Readonly<Record<AgentRole, ModelRef>>;
   readonly judges?: readonly ModelRef[];
-}
-
-export function modelLabel(model: ModelRef): string {
-  return `${model.provider}:${model.id}`;
 }
 
 export function providerRoles(provider: EvalProvider): TeamRoles {

@@ -23,9 +23,10 @@ import {
 import { openWorkspace, type Workspace } from "../wiring.js";
 import type { CommandContext } from "./command-context.js";
 import { executeRun, runExitCode } from "./run.js";
-import { executeTeam, parseCost, reportWorkspace, teamExitCode } from "./team.js";
+import { executeTeam, installRunInterrupt, parseCost, reportWorkspace, teamExitCode } from "./team.js";
 
 const DEFAULT_TITLE_LENGTH = 80;
+const MAX_PARALLEL = 4;
 const RERUNNABLE: ReadonlySet<TaskStatus> = new Set(["open", "failed", "needs-human"]);
 
 const TEAM_STATUS: Readonly<Record<TeamStatus, TaskStatus>> = {
@@ -313,11 +314,31 @@ interface TaskRunOptions {
   readonly maxCost?: number;
   readonly yesVerify: boolean;
   readonly json: boolean;
+  readonly quiet?: boolean;
+  readonly signal?: AbortSignal;
 }
 
 interface TaskRunResult {
   readonly status: TaskStatus;
   readonly exitCode: number;
+}
+
+interface RunSummary {
+  readonly executed: number;
+  readonly exitCode?: number;
+}
+
+type Settled = { readonly id: string; readonly result: TaskRunResult } | { readonly id: string; readonly error: unknown };
+
+function parseParallel(text: string | undefined): number {
+  if (text === undefined) {
+    return 1;
+  }
+  const value = Number(text);
+  if (!Number.isInteger(value) || value < 1 || value > MAX_PARALLEL) {
+    throw usageError(`--parallel must be an integer from 1 to ${String(MAX_PARALLEL)}, got ${JSON.stringify(text)}`);
+  }
+  return value;
 }
 
 async function executeTask(context: CommandContext, workspace: Workspace, store: TaskStore, task: TaskState, options: TaskRunOptions): Promise<TaskRunResult> {
@@ -333,6 +354,8 @@ async function executeTask(context: CommandContext, workspace: Workspace, store:
         yesVerify: options.yesVerify,
         json: options.json,
         taskId: task.id,
+        ...(options.quiet === undefined ? {} : { quiet: options.quiet }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
       result = {
         status: TEAM_STATUS[outcome.status],
@@ -369,6 +392,90 @@ async function executeTask(context: CommandContext, workspace: Workspace, store:
   return result;
 }
 
+async function runSequential(
+  context: CommandContext,
+  workspace: Workspace,
+  store: TaskStore,
+  options: TaskRunOptions,
+  reference: string | undefined,
+  all: boolean,
+): Promise<RunSummary> {
+  let exitCode: number | undefined;
+  let executed = 0;
+  for (;;) {
+    const task = pickTask(await store.load(), executed === 0 ? reference : undefined);
+    if (task === undefined) {
+      break;
+    }
+    executed += 1;
+    const result = await executeTask(context, workspace, store, task, options);
+    if (result.status !== "done") {
+      exitCode ??= result.exitCode;
+    }
+    if (result.status === "open" || !all) {
+      break;
+    }
+  }
+  return { executed, ...(exitCode === undefined ? {} : { exitCode }) };
+}
+
+async function runParallel(context: CommandContext, workspace: Workspace, store: TaskStore, options: TaskRunOptions, limit: number): Promise<RunSummary> {
+  const controller = new AbortController();
+  const uninstall = installRunInterrupt(context, controller);
+  const running = new Map<string, { readonly mode: TaskState["mode"]; readonly done: Promise<Settled> }>();
+  const teamOptions: TaskRunOptions = { ...options, quiet: true, signal: controller.signal };
+  let executed = 0;
+  let exitCode: number | undefined;
+  let stopping = false;
+  let failure: { readonly error: unknown } | undefined;
+  const start = (task: TaskState): void => {
+    executed += 1;
+    const done = executeTask(context, workspace, store, task, task.mode === "team" ? teamOptions : options).then(
+      (result): Settled => ({ id: task.id, result }),
+      (error: unknown): Settled => ({ id: task.id, error }),
+    );
+    running.set(task.id, { mode: task.mode, done });
+  };
+  try {
+    for (;;) {
+      if (!stopping && !controller.signal.aborted && ![...running.values()].some((entry) => entry.mode === "ask")) {
+        const tasks = await store.load();
+        for (const task of tasks.filter((candidate) => isReady(candidate, tasks) && !running.has(candidate.id))) {
+          if (running.size >= limit || (task.mode === "ask" && running.size > 0)) {
+            break;
+          }
+          start(task);
+          if (task.mode === "ask") {
+            break;
+          }
+        }
+      }
+      if (running.size === 0) {
+        break;
+      }
+      const settled = await Promise.race([...running.values()].map((entry) => entry.done));
+      running.delete(settled.id);
+      if ("error" in settled) {
+        failure ??= { error: settled.error };
+        stopping = true;
+        continue;
+      }
+      if (settled.result.status !== "done") {
+        exitCode ??= settled.result.exitCode;
+      }
+      if (settled.result.status === "open") {
+        stopping = true;
+      }
+    }
+  } finally {
+    uninstall();
+  }
+  if (failure !== undefined) {
+    throw failure.error;
+  }
+  return { executed, ...(exitCode === undefined ? {} : { exitCode }) };
+}
+
 async function runTasks(context: CommandContext, args: readonly string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: [...args],
@@ -379,15 +486,20 @@ async function runTasks(context: CommandContext, args: readonly string[]): Promi
       "allow-dirty": { type: "boolean", default: false },
       "max-cost": { type: "string" },
       "yes-verify": { type: "boolean", default: false },
+      parallel: { type: "string" },
       json: { type: "boolean", default: false },
     },
   });
   const [reference, ...extra] = positionals;
   if (extra.length > 0) {
-    throw usageError("usage: bma task run [<id>] [--all]");
+    throw usageError("usage: bma task run [<id>] [--all [--parallel <n>]]");
   }
   if (reference !== undefined && values.all) {
     throw usageError("give either a task id or --all, not both");
+  }
+  const parallel = parseParallel(values.parallel);
+  if (parallel > 1 && !values.all) {
+    throw usageError("--parallel needs --all");
   }
   const maxCost = parseCost(values["max-cost"]);
   const { workspace, store } = await openStore(context);
@@ -399,35 +511,21 @@ async function runTasks(context: CommandContext, args: readonly string[]): Promi
     json: values.json,
   };
   const lock = await lockRunner(context, store);
-  let exitCode: number | undefined;
-  let executed = 0;
+  let summary: RunSummary;
   try {
     await resetInterrupted(store);
-    for (;;) {
-      const task = pickTask(await store.load(), executed === 0 ? reference : undefined);
-      if (task === undefined) {
-        break;
-      }
-      executed += 1;
-      const result = await executeTask(context, workspace, store, task, options);
-      if (result.status !== "done") {
-        exitCode ??= result.exitCode;
-      }
-      if (result.status === "open" || !values.all) {
-        break;
-      }
-    }
+    summary = parallel > 1 ? await runParallel(context, workspace, store, options, parallel) : await runSequential(context, workspace, store, options, reference, values.all);
   } finally {
     await lock.release();
   }
-  if (executed === 0) {
+  if (summary.executed === 0) {
     if (values.json) {
       new JsonlWriter(context.io.stdout, context.redactor).writeResult("task-run", { taskId: null, status: "idle" });
     } else {
       context.err.line("bma: no ready task");
     }
   }
-  return exitCode ?? EXIT_OK;
+  return summary.exitCode ?? EXIT_OK;
 }
 
 export async function taskCommand(context: CommandContext, args: readonly string[]): Promise<number> {

@@ -283,6 +283,8 @@ Entry: [`packages/cli/bin/bma.js`](../packages/cli/bin/bma.js) imports `runCli` 
 | `commands/*.ts` | `run`, `team` (with `team clean`), `task`, `sessions`, `models`, `doctor`, `trust` |
 | [approver/tty-approver.ts](../packages/cli/src/approver/tty-approver.ts) | Interactive permission and command prompts |
 | `tasks/*.ts` | Task store (event log folded into task state) and the exclusive runner lock |
+| [judge/model-judge.ts](../packages/cli/src/judge/model-judge.ts) | Opt-in model judge: fenced prompt from goal, criteria, diff and verification; strict grade schema; used by `bma eval --judge` and the team panel |
+| [panel/team-panel.ts](../packages/cli/src/panel/team-panel.ts) | Panel grading and the conservative selection rule for `bma team --candidates` |
 | `audit/*.ts` | Audit ledger: monthly JSONL files, retention, reader, and the session-log tap that records permissions and per-role cost |
 
 ### Exit codes
@@ -301,9 +303,9 @@ Entry: [`packages/cli/bin/bma.js`](../packages/cli/bin/bma.js) imports `runCli` 
 | Command | Behavior |
 |---|---|
 | `bma run` | One agent session. Flags: `--prompt`/`-p`, `--prompt-file`/`-f`, `--model`/`-m`, `--role` (default `executor`), `--json`. Session log is stored under the project's sessions directory. |
-| `bma team <task>` | Full team pipeline. Flags: `--task-file`/`-f`, `--allow-dirty`, `--max-cost`, `--yes-verify`, `--accept` (repeatable), `--json`. Run directory is `<runsDir>/<runId>` with a `hooks/` subdirectory. |
+| `bma team <task>` | Full team pipeline. Flags: `--task-file`/`-f`, `--allow-dirty`, `--max-cost`, `--yes-verify`, `--accept` (repeatable), `--candidates`, `--judge`, `--json`. Run directory is `<runsDir>/<runId>` with a `hooks/` subdirectory. `--candidates <n>` calls `executeTeam` `n` times concurrently in quiet mode under one interrupt handler, grades each commit with the judges, and selects at most one candidate; it never merges. |
 | `bma team clean` | Removes a run's worktree, and optionally branch `bma/<runId>` with `--delete-branch`. Lists uncommitted changes first. Outside a terminal, `--yes` is required. |
-| `bma task` | `add`, `list` (default), `show`, `cancel`, `run [<id> | --all]`. A task stores a goal, a mode (`team` or `ask`), immutable acceptance criteria and dependencies. `run` takes the per-workspace runner lock and calls `executeTeam` or `executeRun`, the same functions behind `bma team` and `bma run`, with the task id. |
+| `bma task` | `add`, `list` (default), `show`, `cancel`, `run [<id> | --all [--parallel <n>]]`. A task stores a goal, a mode (`team` or `ask`), immutable acceptance criteria and dependencies. `run` takes the per-workspace runner lock and calls `executeTeam` or `executeRun`, the same functions behind `bma team` and `bma run`, with the task id. With `--parallel`, a scheduler under the same lock keeps up to `n` team runs active in quiet mode and runs `ask` tasks alone. |
 | `bma sessions` | `list` (default), `show <id>`, `rm <id>`, `prune [--older-than <days>]` (default 30). Locked sessions are not removed by `rm` or `prune`. |
 | `bma models` | Prints the catalog of both providers. `--provider claude\|grok`, `--json`. |
 | `bma doctor` | Checks Node, platform, git, keys, hosts, state directory mode, workspace, trust, config, instructions, skills, long paths on Windows, and sandbox status. Exits 1 when an error-level check fails. |
