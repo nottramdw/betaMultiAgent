@@ -4,6 +4,7 @@ import { CliError, EXIT_FAILED, EXIT_OK, EXIT_STOPPED, EXIT_USAGE, errorMessage 
 import { createCommandContext, type CommandContext, type MainOverrides } from "./commands/command-context.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { evalCommand } from "./commands/eval.js";
+import { memoryCommand } from "./commands/memory.js";
 import { modelsCommand } from "./commands/models.js";
 import { runCommand } from "./commands/run.js";
 import { sessionsCommand } from "./commands/sessions.js";
@@ -29,6 +30,7 @@ Usage:
   bma task [list [--status <status>] | show <id> | cancel <id> | split <id>] [--json]
   bma task run [<id> | --all [--parallel <n>]] [--allow-dirty] [--max-cost <usd>] [--yes-verify | --unattended] [--json]
   bma sessions [list | show <id> | rm <id> | prune [--older-than <days>]] [--json]
+  bma memory [list [--status <status>] | approve <id>... | reject <id>... | rm <id>...] [--json]
   bma models [--provider claude|grok] [--json]
   bma doctor [--json]
   bma trust [--revoke]
@@ -54,6 +56,7 @@ const COMMANDS: Readonly<Record<string, Command>> = {
   team: teamCommand,
   task: taskCommand,
   sessions: sessionsCommand,
+  memory: memoryCommand,
   models: modelsCommand,
   doctor: doctorCommand,
   trust: trustCommand,
@@ -91,6 +94,9 @@ function maintenanceAction(name: string, args: readonly string[]): string | unde
   }
   if (name === "task" && (action === "cancel" || action === "split")) {
     return `bma task ${action}`;
+  }
+  if (name === "memory" && (action === "approve" || action === "reject" || action === "rm")) {
+    return `bma memory ${action}`;
   }
   return undefined;
 }

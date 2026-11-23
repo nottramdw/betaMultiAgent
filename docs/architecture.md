@@ -223,7 +223,7 @@ Repository operations are in [repo-ops.ts](../packages/tools/src/repo/repo-ops.t
 | `run_command` | exec | no | Exclusive gate |
 | `write_file` | write | no | |
 
-`bma run --role` keeps only read-only tools for read-only roles.
+`bma run --role` keeps only read-only tools for read-only roles. The CLI adds `memory_propose` (permission kind none, read-only) to every session, so every role can propose a memory entry.
 
 ### Process execution
 
@@ -280,7 +280,8 @@ Entry: [`packages/cli/bin/bma.js`](../packages/cli/bin/bma.js) imports `runCli` 
 | [wiring.ts](../packages/cli/src/wiring.ts) | Builds redactor, model resolver, workspace, environment, permission engine, tools, team roles |
 | [config/paths.ts](../packages/cli/src/config/paths.ts) | State and config directories, workspace root checks, project keys |
 | [cli-error.ts](../packages/cli/src/cli-error.ts) | Exit codes |
-| `commands/*.ts` | `run`, `team` (with `team clean`), `task`, `sessions`, `models`, `doctor`, `trust` |
+| `commands/*.ts` | `run`, `team` (with `team clean`), `task`, `sessions`, `memory`, `models`, `doctor`, `trust` |
+| `memory/*.ts` | Workspace memory: event log of proposals and user decisions, the `memory_propose` tool, and the size-capped block of approved entries in the project context |
 | [approver/tty-approver.ts](../packages/cli/src/approver/tty-approver.ts) | Interactive permission and command prompts |
 | `tasks/*.ts` | Task store (event log folded into task state), the exclusive runner lock, and the lead's split proposal |
 | `budget/*.ts` | Daily cost cap: per-UTC-day spend ledger under a lock file, reservations that set the run cost limit, and the session-log tap that records spend |
@@ -307,8 +308,9 @@ Entry: [`packages/cli/bin/bma.js`](../packages/cli/bin/bma.js) imports `runCli` 
 | `bma run` | One agent session. Flags: `--prompt`/`-p`, `--prompt-file`/`-f`, `--model`/`-m`, `--role` (default `executor`), `--json`. Session log is stored under the project's sessions directory. |
 | `bma team <task>` | Full team pipeline. Flags: `--task-file`/`-f`, `--allow-dirty`, `--max-cost`, `--yes-verify`, `--accept` (repeatable), `--candidates`, `--judge`, `--json`. Run directory is `<runsDir>/<runId>` with a `hooks/` subdirectory. `--candidates <n>` calls `executeTeam` `n` times concurrently in quiet mode under one interrupt handler, grades each commit with the judges, and selects at most one candidate; it never merges. |
 | `bma team clean` | Removes a run's worktree, and optionally branch `bma/<runId>` with `--delete-branch`. Lists uncommitted changes first. Outside a terminal, `--yes` is required. |
-| `bma task` | `add`, `list` (default), `show`, `cancel`, `run [<id> | --all [--parallel <n>]]`. A task stores a goal, a mode (`team` or `ask`), immutable acceptance criteria and dependencies. `run` takes the per-workspace runner lock and calls `executeTeam` or `executeRun`, the same functions behind `bma team` and `bma run`, with the task id. With `--parallel`, a scheduler under the same lock keeps up to `n` team runs active in quiet mode and runs `ask` tasks alone. |
+| `bma task` | `add`, `list` (default), `show`, `cancel`, `split <id>`, `run [<id> | --all [--parallel <n>]]`. A task stores a goal, a mode (`team` or `ask`), immutable acceptance criteria and dependencies. `run` takes the per-workspace runner lock and calls `executeTeam` or `executeRun`, the same functions behind `bma team` and `bma run`, with the task id. With `--parallel`, a scheduler under the same lock keeps up to `n` team runs active in quiet mode and runs `ask` tasks alone. |
 | `bma sessions` | `list` (default), `show <id>`, `rm <id>`, `prune [--older-than <days>]` (default 30). Locked sessions are not removed by `rm` or `prune`. |
+| `bma memory` | `list` (default), `approve <id>...`, `reject <id>...`, `rm <id>...`. Approved entries are passed to `loadProjectContext` as the `memory` source. |
 | `bma models` | Prints the catalog of both providers. `--provider claude\|grok`, `--json`. |
 | `bma doctor` | Checks Node, platform, git, keys, hosts, state directory mode, workspace, trust, config, instructions, skills, long paths on Windows, and sandbox status. Exits 1 when an error-level check fails. |
 | `bma trust` | Lists workspace trust records and asks for confirmation. `--revoke` removes trust. Trust is bound to the SHA-256 of `bma.config.json`. |

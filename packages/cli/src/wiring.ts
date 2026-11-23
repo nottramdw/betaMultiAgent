@@ -28,9 +28,11 @@ import type { CliIo } from "./cli-io.js";
 import { usageError } from "./cli-error.js";
 import { loadProjectConfig, loadUserConfig, type LoadedConfigFile } from "./config/load.js";
 import { mergeConfig, type EffectiveConfig } from "./config/merge.js";
-import { realpathLoose, resolveDirs, resolveWorkspaceRoot, type BmaDirs } from "./config/paths.js";
+import { memoryDir, realpathLoose, resolveDirs, resolveWorkspaceRoot, type BmaDirs } from "./config/paths.js";
 import { parseModelSpec, type BudgetConfig, type RoleConfigInput } from "./config/schema.js";
 import { configDigest, isTrusted } from "./config/trust.js";
+import { MemoryStore, renderMemory } from "./memory/memory-store.js";
+import { createMemoryProposeTool } from "./memory/memory-tool.js";
 
 export const CREDENTIAL_VARIABLES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "XAI_API_KEY"] as const;
 
@@ -166,8 +168,23 @@ export function createPermissionEngine(
   });
 }
 
-export function createTools(environment: Environment, skills: SkillRegistry): readonly ToolDefinition[] {
-  return [...createDefaultTools({ environment }), ...createSkillTools(skills)];
+export function createTools(environment: Environment, skills: SkillRegistry, memory?: MemoryStore): readonly ToolDefinition[] {
+  return [...createDefaultTools({ environment }), ...createSkillTools(skills), ...(memory === undefined ? [] : [createMemoryProposeTool(memory)])];
+}
+
+export function openMemoryStore(workspace: Workspace, warn: (message: string) => void): MemoryStore {
+  return new MemoryStore(memoryDir(workspace.dirs, workspace.root), workspace.redactor, workspace.io.now, warn);
+}
+
+export interface WorkspaceMemory {
+  readonly store: MemoryStore;
+  readonly context?: string;
+}
+
+export async function loadWorkspaceMemory(workspace: Workspace, warn: (message: string) => void): Promise<WorkspaceMemory> {
+  const store = openMemoryStore(workspace, warn);
+  const context = renderMemory(await store.load());
+  return context === undefined ? { store } : { store, context };
 }
 
 function roleOverride(base: RoleConfig | undefined, input: RoleConfigInput | undefined): RoleConfig | undefined {

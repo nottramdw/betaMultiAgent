@@ -121,6 +121,10 @@ export function tasksDir(dirs: BmaDirs, root: string): string {
   return path.join(projectStateDir(dirs, root), "tasks");
 }
 
+export function memoryDir(dirs: BmaDirs, root: string): string {
+  return path.join(projectStateDir(dirs, root), "memory");
+}
+
 export function worktreesDir(dirs: BmaDirs): string {
   return path.join(dirs.state, "worktrees");
 }

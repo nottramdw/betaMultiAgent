@@ -195,7 +195,7 @@ Source: [../packages/tools/src/process/child-env.ts](../packages/tools/src/proce
 - Only names in `ALLOWED_NAMES` are inherited from the parent environment.
 - Names starting with `ANTHROPIC_` or `XAI_` are never passed to children.
 - Forced values: `GIT_TERMINAL_PROMPT=0`, `GIT_PAGER=cat`, `PAGER=cat`, `NO_COLOR=1`, `BMA_AGENT_CHILD=1`.
-- When `BMA_AGENT_CHILD=1`, `bma` refuses maintenance and approval commands with exit 4: `trust`, `team clean`, `sessions rm`, `sessions prune`, `task cancel` and `task split`. A command run by an agent or by harness verification therefore cannot remove state or grant trust. Children never receive API keys, so a nested `bma` cannot call a model.
+- When `BMA_AGENT_CHILD=1`, `bma` refuses maintenance and approval commands with exit 4: `trust`, `team clean`, `sessions rm`, `sessions prune`, `task cancel`, `task split`, `memory approve`, `memory reject` and `memory rm`. A command run by an agent or by harness verification therefore cannot remove state or grant trust. Children never receive API keys, so a nested `bma` cannot call a model.
 - Publish commands (`npm publish`, `pnpm publish`, `yarn publish`, `gh release`) are not hard-denied. Like any other command they need an exec allow rule or approval; `npm`, `pnpm`, `yarn` and `gh` accept only exact-argv rules.
 - Defaults: `PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8`. On Windows, `NoDefaultCurrentDirectoryInExePath=1`.
 - `envPassthrough` from configuration adds names, but the config loader rejects denied names (see [Secrets, output, and state](#secrets-output-and-state)).
@@ -249,6 +249,7 @@ Source: [../packages/core/src/agent/system-prompt.ts](../packages/core/src/agent
   2. Commands are given as argv only.
   3. The model must not exfiltrate secrets or attempt to bypass permissions.
 - The skill catalog is appended to the project-context message whenever a catalog exists. Its content is only the result of skill discovery, which applies the trust gate to repository skill roots. The catalog text states that skill text is reference data, not instructions ([catalog.ts](../packages/skills/src/catalog.ts)).
+- Approved memory entries are appended as a `memory` block of at most 8 KiB, with `<` escaped. An agent can only propose an entry with `memory_propose`; the entry reaches a model only after the user runs `bma memory approve`, which is refused when `BMA_AGENT_CHILD=1`. A proposal can still carry misleading text, so the user should read each entry before approving it ([memory-store.ts](../packages/cli/src/memory/memory-store.ts)).
 
 ### Skills
 

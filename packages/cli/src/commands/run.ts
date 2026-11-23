@@ -29,6 +29,7 @@ import {
   createModelResolver,
   createPermissionEngine,
   createTools,
+  loadWorkspaceMemory,
   ensureStateDir,
   loadSkills,
   openWorkspace,
@@ -175,7 +176,10 @@ export async function executeRun(context: CommandContext, workspace: Workspace, 
   await ensureStateDir(workspace.dirs);
   const environment = createEnvironment(workspace, skills, workspace.root, "local");
   const writable = role === "executor";
-  const tools = createTools(environment, skills).filter((tool) => writable || tool.capabilities.readOnly);
+  const memory = await loadWorkspaceMemory(workspace, (message) => {
+    context.err.line(`bma: memory: ${message}`);
+  });
+  const tools = createTools(environment, skills, memory.store).filter((tool) => writable || tool.capabilities.readOnly);
   const name = role;
   const opened: OpenedChannel | undefined = execution.unattended !== true && isInteractive(context, execution.json) ? openPromptChannel(context) : undefined;
   const permissions = createPermissionEngine(workspace, environment, skills, opened === undefined ? undefined : createTtyApprover(opened.channel, name));
@@ -202,6 +206,7 @@ export async function executeRun(context: CommandContext, workspace: Workspace, 
     root: workspace.root,
     trusted: workspace.trusted,
     ...(catalog === undefined ? {} : { skillCatalog: catalog }),
+    ...(memory.context === undefined ? {} : { memory: memory.context }),
   });
   const store = await SessionStore.open({ dir: path.join(sessionsDir(workspace.dirs, workspace.root), id), redactor: context.redactor });
   const human = execution.json ? undefined : new HumanRenderer({ stdout: context.out, stderr: context.err, streamText: true });

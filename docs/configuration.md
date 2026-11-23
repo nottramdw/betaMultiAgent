@@ -242,6 +242,7 @@ Override with `BMA_HOME`, which takes precedence on every platform:
 | `<state>/projects/<key>/audit/<YYYY-MM>.jsonl` | Audit ledger, one file per UTC month. |
 | `<state>/projects/<key>/tasks/tasks.jsonl` | Task store, an append-only event log. |
 | `<state>/projects/<key>/tasks/runner.lock` | Lock held by `bma task run`. |
+| `<state>/projects/<key>/memory/memory.jsonl` | Workspace memory, an append-only event log of proposals and decisions. |
 | `<state>/worktrees/<runId>/` | Git worktree for a team run. |
 | `<state>/trust.json` | Trust grants. |
 
@@ -565,6 +566,29 @@ Options: `--json` (JSON output) and `--older-than <days>` (non-negative number, 
 When the first argument is an option, the action defaults to `list`: `bma sessions --json` equals `bma sessions list --json`.
 
 Source: [`sessions.ts`](../packages/cli/src/commands/sessions.ts).
+
+### `bma memory`
+
+```
+bma memory [list [--status <status>] | approve <id>... | reject <id>... | rm <id>...] [--json]
+```
+
+| Action | Behavior |
+|--------|----------|
+| `list` (default) | Lists `pending` and `approved` entries with text, proposing agent, session, dates and approver. `--status` shows one status instead: `pending`, `approved`, `rejected` or `removed`. |
+| `approve <id>...` | Approves `pending` entries. |
+| `reject <id>...` | Rejects `pending` entries. |
+| `rm <id>...` | Removes `pending` or `approved` entries. |
+
+An id may be shortened to a unique prefix of at least 4 characters. If any id is unknown or has the wrong status, nothing is changed and the command exits 2. Decisions record the approver from `USER` or `USERNAME` (`user` when neither is set) and the time.
+
+Every agent session of `bma run` and `bma team`, in every role, has the tool `memory_propose`. It records one fact (at most 500 characters, with an optional reason) as `pending`, with the agent name and session id. A session may propose at most 5 entries, and at most 50 entries may be pending in a workspace. Secrets known to the redactor are masked before the entry is written.
+
+Approved entries are added to the project-context message of later sessions, as a `<context source="memory">` block: newest first, at most 8 KiB, older entries omitted with a note. Pending, rejected and removed entries are never sent to a model. Memory is loaded whether or not the workspace is trusted, because only the user can approve an entry. The tool and the command are the same for Claude and Grok models.
+
+With `--json`, `list` writes one record of type `memory-list` with `entries`; the other actions write one record of type `memory-updated` with `status` and `ids`.
+
+Source: [`memory.ts`](../packages/cli/src/commands/memory.ts), [`memory-store.ts`](../packages/cli/src/memory/memory-store.ts), [`memory-tool.ts`](../packages/cli/src/memory/memory-tool.ts).
 
 ### `bma models`
 

@@ -137,6 +137,7 @@ export interface RunTeamOptions {
   readonly openSessionLog?: (sessionId: string, role: AgentRole) => Promise<TeamSessionLog>;
   readonly redactor: Redactor;
   readonly skillCatalog?: string;
+  readonly memory?: string;
   readonly listeners?: readonly EventListener[];
   readonly maxRevisions?: number;
   readonly platform?: NodeJS.Platform;
@@ -328,6 +329,7 @@ class TeamRun {
       root: options.root,
       trusted: options.trusted,
       ...(options.skillCatalog === undefined ? {} : { skillCatalog: options.skillCatalog }),
+      ...(options.memory === undefined ? {} : { memory: options.memory }),
     });
     this.#mainEnvironment = await options.environments.create(options.root);
 

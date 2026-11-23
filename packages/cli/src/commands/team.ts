@@ -34,6 +34,7 @@ import {
   createModelResolver,
   createPermissionEngine,
   createTools,
+  loadWorkspaceMemory,
   ensureStateDir,
   loadSkills,
   openWorkspace,
@@ -394,6 +395,9 @@ export async function executeTeam(context: CommandContext, workspace: Workspace,
   const controller = new AbortController();
   const uninstall = input.signal === undefined ? installRunInterrupt(context, controller) : linkSignal(input.signal, controller);
   const catalog = skillCatalog(skills);
+  const memory = await loadWorkspaceMemory(workspace, (message) => {
+    context.err.line(`bma: memory: ${message}`);
+  });
   const audit = await openAudit(context, workspace, runId);
   audit.recorder.start({
     command: "team",
@@ -421,7 +425,7 @@ export async function executeTeam(context: CommandContext, workspace: Workspace,
           Promise.resolve(createEnvironment(workspace, skills, root, samePath(root, workspace.root, context.io.platform) ? "local" : "git-worktree")),
       },
       resolveModel,
-      toolsFor: (_role, environment) => createTools(environment, skills),
+      toolsFor: (_role, environment) => createTools(environment, skills, memory.store),
       permissionsFor: (role, environment) =>
         createPermissionEngine(workspace, environment, skills, opened === undefined ? undefined : createTtyApprover(opened.channel, role)),
       commandPolicy,
@@ -443,6 +447,7 @@ export async function executeTeam(context: CommandContext, workspace: Workspace,
         ),
       redactor: context.redactor,
       ...(catalog === undefined ? {} : { skillCatalog: catalog }),
+      ...(memory.context === undefined ? {} : { memory: memory.context }),
       listeners,
       platform: context.io.platform,
       now: context.io.now,
