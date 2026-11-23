@@ -44,7 +44,7 @@ describe("bma entry point", () => {
 
   it("refuses maintenance commands in processes started by an agent", async () => {
     const sandbox = makeSandbox();
-    for (const argv of [["trust"], ["team", "clean", "--all", "--yes"], ["sessions", "prune"], ["sessions", "rm", "x"], ["task", "cancel", "abcd"]]) {
+    for (const argv of [["trust"], ["team", "clean", "--all", "--yes"], ["sessions", "prune"], ["sessions", "rm", "x"], ["task", "cancel", "abcd"], ["task", "split", "abcd"]]) {
       const result = await runBma(sandbox, argv, { env: { BMA_AGENT_CHILD: "1" } });
       expect(result.code, argv.join(" ")).toBe(EXIT_STOPPED);
       expect(result.stderr.text).toContain("not available to processes started by an agent");

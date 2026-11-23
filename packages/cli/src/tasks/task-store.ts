@@ -10,7 +10,7 @@ export const MAX_GOAL_LENGTH = 20_000;
 export const MAX_DEPENDENCIES = 32;
 export const MIN_ID_PREFIX = 4;
 
-export const TaskStatusSchema = z.enum(["open", "running", "done", "failed", "needs-human", "cancelled"]);
+export const TaskStatusSchema = z.enum(["open", "running", "done", "failed", "needs-human", "cancelled", "split"]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
 export const TaskModeSchema = z.enum(["team", "ask"]);
@@ -184,6 +184,19 @@ export function isReady(task: TaskState, tasks: readonly TaskState[]): boolean {
   return dependenciesDone(task, tasks) && task.status === "open";
 }
 
+export function dependencySatisfied(id: string, tasks: readonly TaskState[], seen: Set<string> = new Set()): boolean {
+  const task = tasks.find((candidate) => candidate.id === id);
+  if (task?.status === "done") {
+    return true;
+  }
+  if (task?.status !== "split" || seen.has(id)) {
+    return false;
+  }
+  seen.add(id);
+  const children = tasks.filter((candidate) => candidate.parent === id && candidate.status !== "cancelled");
+  return children.length > 0 && children.every((child) => dependencySatisfied(child.id, tasks, seen));
+}
+
 export function dependenciesDone(task: TaskState, tasks: readonly TaskState[]): boolean {
-  return task.dependencies.every((id) => tasks.find((candidate) => candidate.id === id)?.status === "done");
+  return task.dependencies.every((id) => dependencySatisfied(id, tasks));
 }

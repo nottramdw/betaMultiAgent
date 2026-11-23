@@ -440,7 +440,7 @@ Source: [`team-clean.ts`](../packages/cli/src/commands/team-clean.ts).
 
 ```
 bma task add <goal> [--goal-file <file>] [--title <text>] [--accept <criterion>]... [--after <id>]... [--parent <id>] [--ask] [--json]
-bma task [list [--status <status>] | show <id> | cancel <id>] [--json]
+bma task [list [--status <status>] | show <id> | cancel <id> | split <id>] [--json]
 bma task run [<id> | --all [--parallel <n>]] [--allow-dirty] [--max-cost <usd>] [--yes-verify | --unattended] [--json]
 ```
 
@@ -452,6 +452,7 @@ A task records a goal for a later run. Tasks are stored per workspace in `<state
 | `list` (default) | Lists tasks with id, status, mode, title and dependencies. `--status` filters by status. |
 | `show <id>` | Prints the task, its dependencies with their status, and the status history with run ids. |
 | `cancel <id>` | Sets an `open`, `failed` or `needs-human` task to `cancelled`. |
+| `split <id>` | Asks the lead to split an `open`, `failed` or `needs-human` task into smaller tasks, and saves them only after confirmation; see below. |
 | `run` | Runs tasks; see below. |
 
 Options of `add`:
@@ -465,7 +466,14 @@ Options of `add`:
 | `--parent` | | Parent task, recorded for grouping. It does not affect readiness. |
 | `--ask` | | Mode `ask`: answered by a read-only `researcher` session instead of a team run. |
 
-Statuses: `open`, `running`, `done`, `failed`, `needs-human`, `cancelled`. A task is ready when it is `open` and every dependency is `done`.
+Statuses: `open`, `running`, `done`, `failed`, `needs-human`, `cancelled`, `split`. A task is ready when it is `open` and every dependency is satisfied. A dependency is satisfied when it is `done`, or when it is `split` and every child task that is not `cancelled` is satisfied (at least one child must remain).
+
+`bma task split <id>`:
+
+- Needs an interactive terminal; without one it exits 2 before any model call. When `budget.dailyMaxCostUsd` is set and reached, it exits 3; otherwise its cost is added to the daily ledger.
+- Sends the task title, goal and acceptance criteria to the `lead` model in one request (no tools, no repository access). The lead answers with 2 to 8 tasks, each with a title (at most 80 characters), a goal (at most 4,000 characters), acceptance criteria and the numbers of earlier proposed tasks it must wait for. An invalid answer exits 1 and saves nothing.
+- Prints the proposal and its cost on stderr and asks for confirmation. Only `y` or `yes` saves; any other answer saves nothing.
+- On confirmation, each proposed task is added with the parent's mode, `parent` set to the original task, and dependencies made of the parent's dependencies plus the earlier proposed tasks it waits for. Acceptance criteria are kept only for `team` tasks. The original task is set to `split` (code `split`), so tasks that depend on it wait for its children. With `--json`, one record of type `task-split` carries `parent`, `tasks` and `costUsd`.
 
 `bma task run`:
 

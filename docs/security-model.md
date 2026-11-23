@@ -195,7 +195,7 @@ Source: [../packages/tools/src/process/child-env.ts](../packages/tools/src/proce
 - Only names in `ALLOWED_NAMES` are inherited from the parent environment.
 - Names starting with `ANTHROPIC_` or `XAI_` are never passed to children.
 - Forced values: `GIT_TERMINAL_PROMPT=0`, `GIT_PAGER=cat`, `PAGER=cat`, `NO_COLOR=1`, `BMA_AGENT_CHILD=1`.
-- When `BMA_AGENT_CHILD=1`, `bma` refuses maintenance and approval commands with exit 4: `trust`, `team clean`, `sessions rm`, `sessions prune` and `task cancel`. A command run by an agent or by harness verification therefore cannot remove state or grant trust. Children never receive API keys, so a nested `bma` cannot call a model.
+- When `BMA_AGENT_CHILD=1`, `bma` refuses maintenance and approval commands with exit 4: `trust`, `team clean`, `sessions rm`, `sessions prune`, `task cancel` and `task split`. A command run by an agent or by harness verification therefore cannot remove state or grant trust. Children never receive API keys, so a nested `bma` cannot call a model.
 - Publish commands (`npm publish`, `pnpm publish`, `yarn publish`, `gh release`) are not hard-denied. Like any other command they need an exec allow rule or approval; `npm`, `pnpm`, `yarn` and `gh` accept only exact-argv rules.
 - Defaults: `PYTHONUTF8=1`, `PYTHONIOENCODING=utf-8`. On Windows, `NoDefaultCurrentDirectoryInExePath=1`.
 - `envPassthrough` from configuration adds names, but the config loader rejects denied names (see [Secrets, output, and state](#secrets-output-and-state)).
@@ -231,6 +231,8 @@ While a workspace is untrusted ([merge.ts](../packages/cli/src/config/merge.ts))
 `budget.dailyMaxCostUsd` is read only from the user configuration, even in a trusted workspace, so a repository cannot raise or remove the daily cap. The spend ledger in `<state dir>/spend/` is a bma state file and is not accessible to agents. When the ledger cannot be read, runs are refused instead of proceeding without the cap ([daily-spend.ts](../packages/cli/src/budget/daily-spend.ts)).
 
 `bma team --yes-verify` auto-approves verification commands with an `ask` decision, but only when the workspace is trusted.
+
+`bma task split` saves the lead's proposed tasks only after the user confirms on a terminal, and is refused when `BMA_AGENT_CHILD=1`.
 
 `bma task run --unattended` shows no prompt and approves a setup or verification command only when a user-configuration `exec` allow rule lists its exact argv ([unattended-policy.ts](../packages/cli/src/unattended/unattended-policy.ts)). A repository's own rules and the plan written by the lead cannot widen this list, prefix rules do not count, and the mode refuses to start without a daily cost cap. An approved result whose verification did not pass is left for a human (`needs-human`), not marked done.
 

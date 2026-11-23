@@ -7,8 +7,10 @@ import { readPromptFile } from "../input/prompt-file.js";
 import { JsonlWriter } from "../output/jsonl.js";
 import { displayValue } from "../output/sanitize.js";
 import { acquireRunnerLock, defaultLockEnvironment, RunnerLockError, type RunnerLock } from "../tasks/runner-lock.js";
+import { proposeSplit, type SplitProposal } from "../tasks/task-split.js";
 import {
   dependenciesDone,
+  dependencySatisfied,
   findTask,
   isReady,
   MAX_GOAL_LENGTH,
@@ -20,8 +22,9 @@ import {
   type TaskState,
   type TaskStatus,
 } from "../tasks/task-store.js";
-import { openWorkspace, type Workspace } from "../wiring.js";
-import type { CommandContext } from "./command-context.js";
+import { openDailySpend } from "../budget/run-budget.js";
+import { createModelResolver, openWorkspace, teamRoles, type Workspace } from "../wiring.js";
+import { confirm, type CommandContext } from "./command-context.js";
 import { executeRun, runExitCode } from "./run.js";
 import { executeTeam, installRunInterrupt, parseCost, reportWorkspace, teamExitCode } from "./team.js";
 
@@ -266,6 +269,94 @@ async function cancelTask(context: CommandContext, args: readonly string[]): Pro
   return EXIT_OK;
 }
 
+function describeProposal(context: CommandContext, parent: TaskState, proposal: SplitProposal): void {
+  context.err.line(`bma: the lead proposes to split task ${parent.id} into ${String(proposal.tasks.length)} tasks:`);
+  proposal.tasks.forEach((child, index) => {
+    const after = child.after.length === 0 ? "" : ` (after ${child.after.map(String).join(", ")})`;
+    context.err.line(`  ${String(index + 1)}. ${displayValue(child.title)}${after}`);
+    for (const line of child.goal.split(/\r?\n/u)) {
+      context.err.line(`     ${displayValue(line, 2000)}`);
+    }
+    for (const criterion of parent.mode === "team" ? child.acceptance : []) {
+      context.err.line(`     - ${displayValue(criterion)}`);
+    }
+  });
+}
+
+function childSpecs(parent: TaskState, proposal: SplitProposal, now: Date): TaskSpec[] {
+  const ids = proposal.tasks.map((_, index) => ulid(now.getTime() + index));
+  return proposal.tasks.map((child, index) => ({
+    id: ids[index] ?? ulid(now.getTime() + index),
+    title: child.title,
+    goal: child.goal,
+    mode: parent.mode,
+    acceptance: parent.mode === "team" ? [...child.acceptance] : [],
+    dependencies: [...new Set([...parent.dependencies, ...child.after.map((number) => ids[number - 1] ?? "")])].filter((id) => id.length > 0),
+    parent: parent.id,
+    createdAt: now.toISOString(),
+  }));
+}
+
+async function splitTask(context: CommandContext, args: readonly string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: [...args],
+    allowPositionals: true,
+    strict: true,
+    options: { json: { type: "boolean", default: false } },
+  });
+  const [reference, ...extra] = positionals;
+  if (reference === undefined || extra.length > 0) {
+    throw usageError("usage: bma task split <id>");
+  }
+  const { workspace, store } = await openStore(context);
+  const parent = lookup(await store.load(), reference);
+  if (!RERUNNABLE.has(parent.status)) {
+    throw usageError(`task ${parent.id} is ${parent.status}; only open, failed or needs-human tasks can be split`);
+  }
+  if (!(context.io.stdinIsTTY && context.io.stderr.isTTY)) {
+    throw usageError("bma task split needs an interactive terminal to approve the proposal; nothing was changed");
+  }
+  const daily = openDailySpend(context, workspace);
+  if (daily !== undefined && !(await daily.hasRemaining())) {
+    throw new CliError(EXIT_BUDGET, `the daily cost cap of $${daily.limitUsd.toFixed(4)} is reached`);
+  }
+  const lead = teamRoles(workspace, context.overrides).lead.model;
+  const target = createModelResolver(context.io.env, context.overrides)(lead);
+  const controller = new AbortController();
+  let result;
+  try {
+    result = await proposeSplit(target, parent, controller.signal);
+  } finally {
+    controller.abort();
+  }
+  await daily?.charge(result.costUsd);
+  describeProposal(context, parent, result.proposal);
+  context.err.line(`bma: proposal cost $${result.costUsd.toFixed(4)}`);
+  if (!(await confirm(context, `save these ${String(result.proposal.tasks.length)} tasks and mark ${parent.id} as split? [y/N]: `))) {
+    context.err.line("bma: nothing was saved");
+    return EXIT_OK;
+  }
+  const latest = lookup(await store.load(), parent.id);
+  if (latest.status !== parent.status) {
+    throw new CliError(EXIT_FAILED, `task ${parent.id} changed to ${latest.status} while the proposal was open; nothing was saved`);
+  }
+  const children = childSpecs(parent, result.proposal, context.io.now());
+  const stored: TaskSpec[] = [];
+  for (const child of children) {
+    stored.push(await store.add(child));
+  }
+  await store.setStatus({ id: parent.id, status: "split", code: "split", message: `split into ${stored.map((child) => child.id).join(", ")}` });
+  if (values.json) {
+    new JsonlWriter(context.io.stdout, context.redactor).writeResult("task-split", { parent: parent.id, tasks: stored, costUsd: result.costUsd });
+  } else {
+    for (const child of stored) {
+      context.out.line(`task ${child.id} added (${child.mode}): ${displayValue(child.title)}`);
+    }
+    context.out.line(`task ${parent.id} split`);
+  }
+  return EXIT_OK;
+}
+
 function pickTask(tasks: readonly TaskState[], reference: string | undefined): TaskState | undefined {
   if (reference === undefined) {
     return tasks.find((task) => isReady(task, tasks));
@@ -275,7 +366,7 @@ function pickTask(tasks: readonly TaskState[], reference: string | undefined): T
     throw usageError(`task ${task.id} is ${task.status}; only open, failed or needs-human tasks can run`);
   }
   if (!dependenciesDone(task, tasks)) {
-    const pending = task.dependencies.filter((id) => tasks.find((candidate) => candidate.id === id)?.status !== "done");
+    const pending = task.dependencies.filter((id) => !dependencySatisfied(id, tasks));
     throw usageError(`task ${task.id} waits for ${pending.join(", ")}`);
   }
   return task;
@@ -563,6 +654,8 @@ export async function taskCommand(context: CommandContext, args: readonly string
       return showTask(context, rest);
     case "cancel":
       return cancelTask(context, rest);
+    case "split":
+      return splitTask(context, rest);
     case "run":
       return runTasks(context, rest);
     default:

@@ -26,7 +26,7 @@ Usage:
   bma team clean <runId> | --all [--delete-branch] [--yes]
   bma task add <goal> [--goal-file <file>] [--title <text>] [--accept <criterion>]... [--after <id>]...
            [--parent <id>] [--ask] [--json]
-  bma task [list [--status <status>] | show <id> | cancel <id>] [--json]
+  bma task [list [--status <status>] | show <id> | cancel <id> | split <id>] [--json]
   bma task run [<id> | --all [--parallel <n>]] [--allow-dirty] [--max-cost <usd>] [--yes-verify | --unattended] [--json]
   bma sessions [list | show <id> | rm <id> | prune [--older-than <days>]] [--json]
   bma models [--provider claude|grok] [--json]
@@ -89,7 +89,7 @@ function maintenanceAction(name: string, args: readonly string[]): string | unde
   if (name === "sessions" && (action === "rm" || action === "prune")) {
     return `bma sessions ${action}`;
   }
-  if (name === "task" && action === "cancel") {
+  if (name === "task" && (action === "cancel" || action === "split")) {
     return `bma task ${action}`;
   }
   return undefined;
